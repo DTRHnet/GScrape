@@ -1,11 +1,13 @@
 # GScrape
 
-```text
-   ╭────────────────────────────────────────────╮
-   │  G S C R A P E                             │
-   │  your mail · your data · your rules         │
-   ╰────────────────────────────────────────────╯
-```
+<p align="center">
+  <img src="logo.jpg" alt="GScrape logo" width="720">
+</p>
+
+<p align="center">
+  <strong>Your mail · your data · your rules</strong>
+</p>
+
 
 > Take control of your email. Search it, understand it, and turn years of
 > messages into useful personal data — locally, privately, and on your terms.
