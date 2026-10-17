@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GScrape</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">✦</span><span>GScrape</span></div>
+    <p class="eyebrow">LOCAL WORKSPACE</p>
+    <nav>
+      <button class="nav active" data-view="overview">Overview</button>
+      <button class="nav" data-view="search">New search</button>
+      <button class="nav" data-view="history">Run history</button>
+      <button class="nav" data-view="console">Console</button>
+      <button class="nav" data-view="settings">Settings</button>
+      <button class="nav" data-view="debug">Debug</button>
+    </nav>
+    <div class="side-note"><span class="dot"></span> Local-only mode<br><small>No credentials leave this machine.</small></div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div><p class="eyebrow">EMAIL DISCOVERY WORKSPACE</p><h1 id="title">Overview</h1></div>
+      <div class="topbar-actions">
+        <button class="button icon-button ghost" type="button" data-theme-toggle aria-label="Switch to light theme" title="Switch theme">☼</button>
+        <a class="button ghost" href="/api/export?format=report">Export report <span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
+    <section id="app"></section>
+  </main>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

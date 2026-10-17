@@ -1,0 +1,58 @@
+# Secrets and local credentials
+.env
+.env.*
+!.env.example
+sessions/
+*.token
+*.tokens
+*credentials*.json
+client_secret*.json
+oauth*.json
+token*.json
+
+# Wallets, backups, keys, and recovery artifacts
+*.dat
+*.wallet
+*.key
+*.keystore
+*.backup
+*.bak
+*.old
+*.aes
+*.sqlite
+*.db
+*.gpg
+*.asc
+wallet-recovery-attempts.txt
+recovered-wallet*
+bitcoin-wallet-backup-*
+
+# Mailbox contents and sensitive search/audit output
+email-wallet-search.log
+email-wallet-*.log
+email-wallet-*-summary*.md
+results/
+logs/
+dashboard.db
+PROGRESS.jsonl
+
+# Python and editor/build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+*.png
+*.swp
+*.swo
+*~
