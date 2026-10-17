@@ -35,6 +35,7 @@ results/
 logs/
 dashboard.db
 PROGRESS.jsonl
+runtime/
 
 # Python and editor/build artifacts
 .venv/
