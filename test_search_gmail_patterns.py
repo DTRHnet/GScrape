@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,88 @@ spec.loader.exec_module(scanner)
 
 
 class PatternTests(unittest.TestCase):
+    def test_adaptive_rate_limiter_paces_and_caps_cooldown(self):
+        now = [0.0]
+        sleeps = []
+
+        def clock():
+            return now[0]
+
+        def sleeper(delay):
+            sleeps.append(delay)
+            now[0] += delay
+
+        limiter = scanner.AdaptiveRateLimiter(2, max_delay=3, clock=clock, sleeper=sleeper)
+        limiter.wait()
+        limiter.wait()
+        self.assertEqual(sleeps, [0.5])
+        self.assertEqual(limiter.penalize(), 1.0)
+        self.assertEqual(limiter.penalize(), 2.0)
+        self.assertEqual(limiter.penalize(), 3.0)
+
+    def test_adaptive_rate_limiter_zero_disables_proactive_pacing(self):
+        limiter = scanner.AdaptiveRateLimiter(0)
+        self.assertEqual(limiter.interval, 0.0)
+        self.assertEqual(limiter.wait(), 0.0)
+
+    def test_dashboard_accepts_adjustable_rate_limits(self):
+        config = dashboard_server.validate_config({
+            "requests_per_second": "0.5",
+            "rate_limit_max_delay": "90",
+        })
+        self.assertEqual(config["requests_per_second"], 0.5)
+        self.assertEqual(config["rate_limit_max_delay"], 90.0)
+
+    def test_dashboard_rejects_unsafe_rate_limit_values(self):
+        with self.assertRaises(ValueError):
+            dashboard_server.validate_config({"requests_per_second": "11"})
+        with self.assertRaises(ValueError):
+            dashboard_server.validate_config({"rate_limit_max_delay": "0"})
+    def assertCategoryMatch(self, category, positive, negative=()):
+        for value in positive:
+            with self.subTest(category=category, value=value, expected=True):
+                self.assertIn(category, scanner.matched_categories(value))
+        for value in negative:
+            with self.subTest(category=category, value=value, expected=False):
+                self.assertNotIn(category, scanner.matched_categories(value))
+
+    def test_each_filter_type_has_positive_and_boundary_cases(self):
+        self.assertCategoryMatch(
+            "gourl",
+            ("gourl.io", "Go URL dot io", "g o-u-r-l [dot] io"),
+            ("gourlio", "notgourl.io", "gourl.example"),
+        )
+        self.assertCategoryMatch(
+            "wallet",
+            ("wallet", "Bitcoin Core", "hardware wallet", "Ledger"),
+            ("notawallet", "walletish", "ledgering"),
+        )
+        self.assertCategoryMatch(
+            "seed",
+            ("seed phrase", "recovery phrase", "BIP-39", "private key"),
+            ("seedling", "recoveryphrases", "public key"),
+        )
+        self.assertCategoryMatch(
+            "wallet-file",
+            ("wallet.dat", "WalBackup.DAT", "keystore.json", "wal-copy.dat"),
+            ("wallet.datx", "notes.txt"),
+        )
+        self.assertCategoryMatch(
+            "crypto-address",
+            ("0x" + "a" * 40, "1" + "A" * 33, "bc1" + "q" * 30, "ltc1" + "q" * 30),
+            ("0x" + "a" * 39, "hello0x" + "a" * 40),
+        )
+        self.assertCategoryMatch(
+            "identity",
+            ("jstacey", "jonstacey", "jstacy", "jonstacy", "johnstacy", "johnstacey"),
+            ("notjonstacey", "jon-stacey", "staceyjon"),
+        )
+        self.assertCategoryMatch(
+            "phone",
+            ("(416) 555-0123", "+1 416 555 0123", "4165550123"),
+            ("1165550123", "123-45-6789", "416-555-012"),
+        )
+
     def test_gourl_obfuscated_variant(self):
         self.assertIn("gourl", scanner.matched_categories("The service is GoURL dot io."))
 

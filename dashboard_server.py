@@ -334,6 +334,12 @@ def validate_config(data):
     max_messages = int(data.get("max_messages", 1000))
     if not 1 <= max_messages <= 10_000:
         raise ValueError("max_messages must be between 1 and 10000")
+    requests_per_second = float(data.get("requests_per_second", 1.0))
+    if not 0 <= requests_per_second <= 10:
+        raise ValueError("requests_per_second must be between 0 and 10")
+    rate_limit_max_delay = float(data.get("rate_limit_max_delay", 60.0))
+    if not 1 <= rate_limit_max_delay <= 300:
+        raise ValueError("rate_limit_max_delay must be between 1 and 300")
     # Discovery is historical by default; callers may explicitly override the
     # window for a separately authorized search.
     after_date = str(data.get("after_date") or DEFAULT_AFTER_DATE).strip()
@@ -352,6 +358,8 @@ def validate_config(data):
         "after_date": after_date,
         "before_date": before_date,
         "max_messages": max_messages,
+        "requests_per_second": requests_per_second,
+        "rate_limit_max_delay": rate_limit_max_delay,
     }
 
 
@@ -504,6 +512,8 @@ def run_scan(run_id, config):
         "--log-file", str(LOG_PATH),
         "--progress-file", str(progress_path(run_id)),
         "--verbose",
+        "--requests-per-second", str(config["requests_per_second"]),
+        "--rate-limit-max-delay", str(config["rate_limit_max_delay"]),
     ]
     if config.get("category_regex"):
         args.extend(["--category-regex", json.dumps(config["category_regex"])])

@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -35,7 +36,7 @@ TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 DEFAULT_QUERY = 'gourl OR "go url" OR "gourl.io" OR "gourl dot io"'
 IDENTITY_TERMS = ("jstacey", "jonstacey", "jstacy", "jonstacy", "johnstacy", "johnstacey")
 CATEGORY_PATTERNS = {
-    "gourl": re.compile(r"(?i)(?<![a-z0-9])(?:g\s*o\s*[-_.]?\s*u\s*r\s*l|gourl)\s*(?:\.|\(\s*dot\s*\)|\[\s*dot\s*\]|\bdot\b)\s*i\s*o\b"),
+    "gourl": re.compile(r"(?i)(?<![a-z0-9])(?:g\s*[-_.]?\s*o\s*[-_.]?\s*u\s*[-_.]?\s*r\s*[-_.]?\s*l)\s*(?:\.|\(\s*dot\s*\)|\[\s*dot\s*\]|\bdot\b)\s*i\s*o\b"),
     "wallet": re.compile(r"(?i)\b(?:wallet(?:\.dat)?|bitcoin[-_ ]?qt|electrum|multibit|crypto(?:currency)?|blockchain|hardware wallet|cold storage|exchange account|coinbase|kraken|binance|bitcoin core|armory|exodus|ethereum|litecoin|dogecoin|monero|ripple|xrp|trezor|ledger)\b"),
     "seed": re.compile(r"(?i)\b(?:seed phrase|recovery phrase|mnemonic(?: phrase)?|recovery words|backup phrase|bip[- ]?(?:32|39|44|49|84)|paper wallet|secret key|private key|keystore(?:\.json)?)\b"),
     "wallet-file": re.compile(r"(?i)(?<![\w.-])[\w.-]{0,100}(?:wallet|bitcoin|litecoin|dogecoin|monero|ethereum|keystore|backup|walletbackup)[\w.-]*\.(?:dat|wallet|key|json|backup|bak|old|db|sqlite|aes|txt)(?!\w)|(?<![\w.-])wal[^/\\\s]{0,80}\.dat\b"),
@@ -91,6 +92,53 @@ class GmailAPIError(RuntimeError):
         elif code == 403 and reason in {"rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"}:
             detail += "; Gmail API quota or rate limit was reached"
         super().__init__(detail)
+
+
+class AdaptiveRateLimiter:
+    """Bound Gmail request pacing and adapt cooldown after rate errors."""
+
+    def __init__(self, requests_per_second: float = 1.0, max_delay: float = 60.0,
+                 clock=time.monotonic, sleeper=time.sleep):
+        if requests_per_second < 0:
+            raise ValueError("requests_per_second must be non-negative")
+        if max_delay <= 0:
+            raise ValueError("max_delay must be positive")
+        self.requests_per_second = float(requests_per_second)
+        self.interval = 1.0 / self.requests_per_second if self.requests_per_second else 0.0
+        self.max_delay = float(max_delay)
+        self._clock = clock
+        self._sleep = sleeper
+        self._lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._cooldown = 0.0
+
+    def wait(self) -> float:
+        """Wait until the next request is allowed and return waited seconds."""
+        with self._lock:
+            now = self._clock()
+            delay = max(0.0, self._next_request_at - now)
+            if delay:
+                self._sleep(delay)
+                now += delay
+            self._next_request_at = now + self.interval
+            return delay
+
+    def penalize(self, delay: Optional[float] = None) -> float:
+        """Schedule a bounded cooldown after a rate-limit response."""
+        with self._lock:
+            if delay is None:
+                delay = 1.0 if not self._cooldown else min(self._cooldown * 2.0, self.max_delay)
+            delay = max(0.0, min(float(delay), self.max_delay))
+            self._cooldown = delay
+            self._next_request_at = max(self._next_request_at, self._clock() + delay)
+            return delay
+
+    def reset(self) -> None:
+        with self._lock:
+            self._cooldown = 0.0
+
+
+DEFAULT_RATE_LIMITER = AdaptiveRateLimiter()
 
 
 # =============================================================================
@@ -1054,10 +1102,12 @@ def request_json(
     access_token: str,
     params: Optional[Dict[str, Any]] = None,
     retries: int = 4,
+    rate_limiter: Optional[AdaptiveRateLimiter] = None,
 ) -> Dict[str, Any]:
     """Perform a GET against the Gmail API and return the parsed JSON body.
 
     Automatically injects the API key (if supplied) and the Bearer token.
+    Applies client-side pacing and adaptive cooldowns for rate-limit responses.
     Implements exponential backoff for transient HTTP errors (408, 429, 5xx)
     and network failures. Raises RuntimeError with a clear message on
     permanent auth or permission failures.
@@ -1067,12 +1117,15 @@ def request_json(
         query["key"] = api_key
     request_url = f"{url}?{urllib.parse.urlencode(query)}"
     last_error: Optional[Exception] = None
+    limiter = rate_limiter or DEFAULT_RATE_LIMITER
     for attempt in range(retries + 1):
+        limiter.wait()
         request = urllib.request.Request(
             request_url, headers={"Authorization": f"Bearer {access_token}"}
         )
         try:
             with urllib.request.urlopen(request, timeout=45) as response:
+                limiter.reset()
                 return json.load(response)
         except urllib.error.HTTPError as error:
             try:
@@ -1088,11 +1141,15 @@ def request_json(
             message = str(error_info.get("message") or "").strip()
             if error.code == 401:
                 raise GmailAPIError(error.code, reason or "unauthorized", message) from error
-            if error.code == 403 and reason in {
-                "rateLimitExceeded", "userRateLimitExceeded", "backendError"
-            } and attempt < retries:
+            rate_limited = error.code == 403 and reason in {
+                "rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "backendError"
+            }
+            if rate_limited and attempt < retries:
                 last_error = error
-                rate_limit_sleep(attempt)
+                retry_after = error.headers.get("Retry-After")
+                delay = float(retry_after) if retry_after and str(retry_after).isdigit() else None
+                limiter.penalize(delay)
+                rate_limit_sleep(attempt, base=1.0, cap=60.0)
                 continue
             if error.code == 403:
                 raise GmailAPIError(error.code, reason or "forbidden", message) from error
@@ -1372,6 +1429,10 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
     category_regexes = compile_category_regexes(
         json.loads(args.category_regex) if getattr(args, "category_regex", "") else {}
     )
+    rate_limiter = AdaptiveRateLimiter(
+        args.requests_per_second,
+        args.rate_limit_max_delay,
+    )
     date_parts = []
     if not args.no_date_filter:
         if args.after:
@@ -1406,7 +1467,10 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
             }
             if page_token:
                 params["pageToken"] = page_token
-            page = request_json(base_url, api_key, access_token, params, retries=args.retries)
+            page = request_json(
+                base_url, api_key, access_token, params,
+                retries=args.retries, rate_limiter=rate_limiter,
+            )
             api_calls += 1
             pages += 1
             if getattr(args, "verbose", False):
@@ -1433,6 +1497,7 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
                         access_token,
                         {"format": "full"},
                         retries=args.retries,
+                        rate_limiter=rate_limiter,
                     )
                     api_calls += 1
                 except GmailAPIError as error:
@@ -1564,6 +1629,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
     parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")
     parser.add_argument("--retries", type=int, default=4, help="transient API retry count")
+    parser.add_argument(
+        "--requests-per-second", type=float, default=1.0,
+        help="maximum proactive Gmail request rate; 0 disables pacing (default: 1)",
+    )
+    parser.add_argument(
+        "--rate-limit-max-delay", type=float, default=60.0,
+        help="maximum adaptive cooldown in seconds after a rate-limit response (default: 60)",
+    )
     parser.add_argument("--user", default="me", help="Gmail user resource, usually me")
     parser.add_argument("--profile-index", default="0")
     parser.add_argument("--max-messages", type=int, default=1000)
@@ -1636,6 +1709,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-messages must be positive")
     if not 0 <= args.retries <= 10:
         parser.error("--retries must be between 0 and 10")
+    if not 0 <= args.requests_per_second <= 10:
+        parser.error("--requests-per-second must be between 0 and 10")
+    if not 1 <= args.rate_limit_max_delay <= 300:
+        parser.error("--rate-limit-max-delay must be between 1 and 300")
     if not 1024 <= args.oauth_port <= 65535:
         parser.error("--oauth-port must be between 1024 and 65535")
     try:

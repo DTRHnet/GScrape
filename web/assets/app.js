@@ -281,6 +281,8 @@ function render() {
           ].map(([value, label]) => `<label>${label}<input class="category-regex" data-category="${value}" placeholder="Optional regex"></label>`).join("")}</div>
         </div>
         <div class="field"><label>Maximum messages</label><input name="max_messages" type="number" value="1000" min="1" max="10000"></div>
+        <div class="field"><label>Maximum Gmail requests/second</label><input name="requests_per_second" type="number" value="1" min="0" max="10" step="0.1"><p class="muted">Local pacing ceiling. 0 disables proactive pacing; quota errors still use bounded adaptive backoff.</p></div>
+        <div class="field"><label>Maximum adaptive cooldown (seconds)</label><input name="rate_limit_max_delay" type="number" value="60" min="1" max="300" step="1"><p class="muted">Upper bound after rate-limit responses.</p></div>
         <div class="field"><label>Gmail query (optional)</label><input name="query" placeholder="e.g. from:someone@example.com has:attachment"></div>
         <div class="field"><label>After (default: 2013/01/01)</label><input name="after_date" placeholder="YYYY/MM/DD"></div>
         <div class="field"><label>Before (default: 2018/12/31, inclusive)</label><input name="before_date" placeholder="YYYY/MM/DD"></div>
@@ -373,6 +375,8 @@ function collectSearchConfig(form) {
     if (input.value.trim()) data.category_regex[input.dataset.category] = input.value.trim();
   });
   data.max_messages = Number(data.max_messages);
+  data.requests_per_second = Number(data.requests_per_second);
+  data.rate_limit_max_delay = Number(data.rate_limit_max_delay);
   return data;
 }
 
