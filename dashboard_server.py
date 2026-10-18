@@ -275,6 +275,19 @@ def allocate_run_id(connection):
     return f"{next_number:06d}"
 
 
+def reserve_run_directory(run_id, attempts=5):
+    """Reserve a result directory, advancing past stale filesystem collisions."""
+    candidate = int(run_id)
+    for _ in range(attempts):
+        path = RESULTS_DIR / f"{candidate:06d}"
+        try:
+            path.mkdir(parents=True, exist_ok=False)
+            return f"{candidate:06d}", path
+        except FileExistsError:
+            candidate += 1
+    raise RuntimeError("could not reserve a unique result directory")
+
+
 def write_run_artifacts(run_id, run_row, records, status, error=None):
     """Write a redacted, self-contained result bundle for one run."""
     run_dir = RESULTS_DIR / run_id
@@ -1192,8 +1205,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not account_is_connected(account):
                     connection.close()
                     raise ValueError("selected email account is not connected; authorize it first")
-                run_dir = RESULTS_DIR / run_id
-                run_dir.mkdir(parents=True, exist_ok=False)
+                run_id, run_dir = reserve_run_directory(run_id)
                 connection.execute(
                     """INSERT INTO runs
                        (id,profile_id,status,query,category,started_at,results_dir)

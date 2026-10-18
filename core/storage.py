@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -43,13 +44,20 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        try:
-            self.connection.execute("BEGIN IMMEDIATE")
-            yield self.connection
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
+        for attempt in range(5):
+            try:
+                self.connection.execute("BEGIN IMMEDIATE")
+                yield self.connection
+                self.connection.commit()
+                return
+            except sqlite3.OperationalError as error:
+                self.connection.rollback()
+                if "locked" not in str(error).lower() or attempt == 4:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+            except Exception:
+                self.connection.rollback()
+                raise
 
     def migrate(self) -> None:
         self.connection.execute(

@@ -2,6 +2,7 @@ import hashlib
 import tempfile
 import unittest
 import time
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from core.ports import allocate_loopback_port
 from core.storage import Database
 from core.async_jobs import AsyncJobRunner
 from core.providers import DemoProvider, GmailProvider
+from dashboard_server import reserve_run_directory
 
 
 class CoreControlPlaneTests(unittest.TestCase):
@@ -71,6 +73,31 @@ class CoreControlPlaneTests(unittest.TestCase):
                 database.ensure_provider("demo", "Demo")
             with Database(path) as database:
                 self.assertIsNotNone(database.connection.execute("SELECT 1").fetchone())
+
+    def test_result_directory_collision_advances_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            import dashboard_server
+            original = dashboard_server.RESULTS_DIR
+            dashboard_server.RESULTS_DIR = Path(directory)
+            try:
+                (Path(directory) / "000001").mkdir()
+                run_id, path = reserve_run_directory("000001")
+                self.assertEqual(run_id, "000002")
+                self.assertTrue(path.is_dir())
+            finally:
+                dashboard_server.RESULTS_DIR = original
+
+    def test_transaction_retries_transient_locked_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with Database(Path(directory) / "state.db") as database:
+                with Database(Path(directory) / "other.db") as other:
+                    database.ensure_provider("demo", "Demo")
+                    other.ensure_provider("demo", "Demo")
+                    database.connection.execute("BEGIN IMMEDIATE")
+                    database.connection.execute("INSERT INTO providers(id,name,version,created_at) VALUES ('x','X','1','now')")
+                    database.connection.commit()
+                    with other.transaction():
+                        other.connection.execute("SELECT 1")
 
     def test_database_migrates_and_creates_queued_job_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
