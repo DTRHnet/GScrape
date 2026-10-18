@@ -55,6 +55,11 @@ async function refreshCoreJobs() {
   } catch (_) { /* legacy dashboard remains usable if the control plane is unavailable */ }
 }
 
+async function coreJobAction(id, action) {
+  await api(`/api/core/jobs/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });
+  await refreshCoreJobs();
+}
+
 function selectedRunIds() {
   return [...state.selectedRuns].filter((id) => state.runs.some((run) => run.id === id));
 }

@@ -12,6 +12,15 @@ All notable changes are documented here. Versions follow semantic versioning.
 - Added control-plane status polling hooks for dashboard consumers.
 - Added operational notes for controlled scans and explicit live authorization.
 
+## [0.4.0] - 2026-10-18
+
+### Added
+
+- Added queued-job cancellation and safe retry creation endpoints.
+- Added allowlisted provider result payloads and provider-failure propagation.
+- Added lifecycle safeguards for non-secret event metadata and dashboard polling.
+- Added synthetic coverage for cancellation, retry, failure, and redaction behavior.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

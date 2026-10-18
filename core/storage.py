@@ -207,6 +207,35 @@ class Database:
                 (status, utc_now(), error_code, job_id),
             )
 
+    def cancel_job(self, job_id: str) -> bool:
+        """Mark a queued job cancelled before a worker claims it."""
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE jobs_v2 SET status='cancelled', finished_at=?, error_code=? "
+                "WHERE id=? AND status='queued'", (utc_now(), "cancelled_by_user", job_id)
+            )
+            if cursor.rowcount:
+                connection.execute(
+                    "INSERT INTO job_events(job_id,event_type,payload_json,created_at) VALUES (?,?,?,?)",
+                    (job_id, "cancelled", json.dumps({"reason": "cancelled_by_user"}), utc_now())
+                )
+            return cursor.rowcount == 1
+
+    def retry_job(self, job_id: str) -> Optional[str]:
+        """Create a new queued job from a failed/cancelled job without exposing its config."""
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT account_id, status, config_snapshot_json FROM jobs_v2 WHERE id=?", (job_id,)
+            ).fetchone()
+            if row is None or row["status"] not in {"failed", "cancelled"}:
+                return None
+            new_id = uuid.uuid4().hex
+            connection.execute(
+                "INSERT INTO jobs_v2(id,account_id,status,config_snapshot_json,created_at) VALUES(?,?,?,?,?)",
+                (new_id, row["account_id"], "queued", row["config_snapshot_json"], utc_now()),
+            )
+            return new_id
+
     def get_job(self, job_id: str) -> Optional[sqlite3.Row]:
         """Return a job snapshot without exposing secret configuration values."""
         return self.connection.execute(

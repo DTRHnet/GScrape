@@ -96,6 +96,25 @@ class CoreControlPlaneTests(unittest.TestCase):
                 self.assertEqual(row["status"], "failed")
                 self.assertEqual(row["error_code"], "RuntimeError")
 
+    def test_cancel_and_retry_are_durable_and_events_are_redacted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.db"
+            with Database(path) as database:
+                database.ensure_provider("demo", "Demo")
+                database.connection.execute(
+                    "INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    ("account-1", "demo", "example@example.invalid", "Example", "connected", "now"),
+                )
+                database.connection.commit()
+                job_id = database.create_job("account-1", {"operation": "fail", "secret": "hidden"})
+                self.assertTrue(database.cancel_job(job_id))
+                self.assertEqual(database.get_job(job_id)["status"], "cancelled")
+                retry_id = database.retry_job(job_id)
+                self.assertIsNotNone(retry_id)
+                self.assertEqual(database.get_job(retry_id)["status"], "queued")
+                event = database.connection.execute("SELECT payload_json FROM job_events WHERE job_id=?", (job_id,)).fetchone()
+                self.assertNotIn("hidden", event[0])
+
 
 if __name__ == "__main__":
     unittest.main()

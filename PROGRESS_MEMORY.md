@@ -33,3 +33,15 @@ Register the Gmail adapter with dashboard job submission after focused validatio
 Validation: `python -m py_compile core/*.py tests/test_core_control_plane.py gscrape.py`; `python -m unittest discover -v` (32 tests passed).
 
 Updated: 2026-10-18
+
+## Part 3 completion note
+
+- [x] Added durable cancellation and retry primitives.
+- [x] Added allowlisted provider result/event metadata and failure propagation.
+- [x] Added synthetic lifecycle/redaction coverage.
+- [x] Updated dashboard/server version to 0.4.0 milestone.
+- [ ] Authorized live Gmail scan remains operator-gated and requires an existing authorized session.
+
+Part 4 should focus on live operational validation, account health/token refresh, richer
+dashboard controls, bounded result retention, and resilience testing against Gmail API
+rate limits and pagination.

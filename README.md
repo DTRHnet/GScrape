@@ -18,7 +18,7 @@
 [![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f?style=flat-square)](#testing)
 [![Security](https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square)](#security-and-data-handling)
 
-**Version:** `0.3.0` · **Status:** bounded control-plane foundation · **Deployment:** self-hosted
+**Version:** `0.4.0` · **Status:** bounded control-plane foundation · **Deployment:** self-hosted
 
 ## Overview
 

@@ -40,6 +40,11 @@ class AsyncJobRunner:
         self._futures[job_id] = future
         return future
 
+    def cancel(self, job_id: str) -> bool:
+        """Cancel a queued job; running subprocess cancellation remains provider-specific."""
+        with Database(self.database_path) as database:
+            return database.cancel_job(job_id)
+
     def _execute(self, job_id: str, operation: JobCallable) -> Dict[str, Any]:
         try:
             with Database(self.database_path) as database:
@@ -49,10 +54,18 @@ class AsyncJobRunner:
                 import json
                 config = json.loads(row["config_snapshot_json"])
             result = operation(config)
+            if not isinstance(result, dict):
+                result = {"status": "ok"}
+            public_result = {key: value for key, value in result.items()
+                             if key in {"provider", "status", "operation", "run_id", "matches", "error_code", "exit_code", "stderr_lines"}}
             with Database(self.database_path) as database:
-                database.finish_job(job_id, "completed")
-                database.add_job_event(job_id, "completed", {"result": result})
-            return result
+                if public_result.get("status") == "failed":
+                    database.finish_job(job_id, "failed", error_code=public_result.get("error_code", "provider_failed"))
+                    database.add_job_event(job_id, "failed", public_result)
+                else:
+                    database.finish_job(job_id, "completed")
+                    database.add_job_event(job_id, "completed", public_result)
+            return public_result
         except Exception as error:
             with Database(self.database_path) as database:
                 database.finish_job(job_id, "failed", error_code=type(error).__name__)

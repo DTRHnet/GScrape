@@ -652,7 +652,7 @@ def run_scan(run_id, config):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "GScrape/1.1"
+    server_version = "GScrape/1.2"
 
     def log_message(self, *_):
         return
@@ -731,7 +731,7 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"runs": list_rows("runs")})
             if parsed.path == "/api/core/jobs":
                 return json_response(self, core_job_snapshot())
-            if parsed.path.startswith("/api/core/jobs/"):
+            if parsed.path.startswith("/api/core/jobs/") and parsed.path.count("/") == 4:
                 job_id = parsed.path.rsplit("/", 1)[-1]
                 snapshot = core_job_snapshot(job_id)
                 if not snapshot["jobs"]:
@@ -1049,6 +1049,18 @@ class Handler(BaseHTTPRequestHandler):
                     job_id = database.create_job(account_id, job_config)
                 CORE_JOB_RUNNER.submit(job_id, adapter.execute)
                 return json_response(self, {"id": job_id, "status": "queued", "provider": provider}, 202)
+            if parsed.path.startswith("/api/core/jobs/") and parsed.path.endswith("/cancel"):
+                job_id = parsed.path.split("/")[4]
+                if not CORE_JOB_RUNNER.cancel(job_id):
+                    return json_response(self, {"error": "job is not queued or was not found"}, 409)
+                return json_response(self, {"id": job_id, "status": "cancelled"})
+            if parsed.path.startswith("/api/core/jobs/") and parsed.path.endswith("/retry"):
+                job_id = parsed.path.split("/")[4]
+                with Database(DB_PATH) as database:
+                    new_id = database.retry_job(job_id)
+                if not new_id:
+                    return json_response(self, {"error": "only failed or cancelled jobs can be retried"}, 409)
+                return json_response(self, {"id": new_id, "status": "queued"}, 202)
             if parsed.path == "/api/profiles":
                 config = validate_config(data)
                 profile_id = uuid.uuid4().hex
