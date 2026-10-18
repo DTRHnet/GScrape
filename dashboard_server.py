@@ -696,7 +696,7 @@ class Handler(BaseHTTPRequestHandler):
                     "scanner": SCANNER.name,
                     "local_only": True,
                     "database": str(DB_PATH.name),
-                    "version": "0.5.0",
+                    "version": "0.6.0",
                 })
             if parsed.path == "/api/profiles":
                 return json_response(self, {"profiles": list_rows("profiles")})

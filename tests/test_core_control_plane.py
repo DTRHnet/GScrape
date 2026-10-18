@@ -8,10 +8,26 @@ from pathlib import Path
 from core.ports import allocate_loopback_port
 from core.storage import Database
 from core.async_jobs import AsyncJobRunner
-from core.providers import DemoProvider
+from core.providers import DemoProvider, GmailProvider
 
 
 class CoreControlPlaneTests(unittest.TestCase):
+    def test_gmail_retry_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = GmailProvider(Path(directory) / "missing.py", Path(directory))
+            calls = []
+            original = __import__("core.providers", fromlist=["subprocess"]).subprocess.run
+            class Result:
+                returncode = 1
+                stderr = ""
+            module = __import__("core.providers", fromlist=["subprocess"])
+            module.subprocess.run = lambda *args, **kwargs: (calls.append(1) or Result())
+            try:
+                provider._run_bounded(["synthetic"], attempts=2)
+            finally:
+                module.subprocess.run = original
+            self.assertEqual(len(calls), 2)
+
     def test_database_migrates_and_creates_queued_job_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             with Database(Path(directory) / "state.db") as database:

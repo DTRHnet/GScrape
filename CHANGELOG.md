@@ -2,6 +2,15 @@
 
 All notable changes are documented here. Versions follow semantic versioning.
 
+## [0.6.0] - 2026-10-18
+
+### Added
+
+- Added bounded scanner retry behavior for transient nonzero exits.
+- Added dashboard cancel/retry controls with safe event delegation.
+- Added explicit operator-gated Gmail health metadata and Part 5 lifecycle hooks.
+- Added synthetic validation coverage for retry policy and safe endpoint metadata.
+
 ## [0.5.0] - 2026-10-18
 
 ### Added

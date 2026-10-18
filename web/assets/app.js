@@ -45,7 +45,7 @@ function statusClass(status) {
 }
 
 function coreJobRows(jobs) {
-  return (jobs || []).map((job) => `<tr><td><code>${esc(job.id)}</code></td><td>${esc(job.provider)}</td><td><span class="badge ${statusClass(job.status)}">${esc(job.status)}</span></td><td>${esc(job.created_at || "")}</td><td>${esc(job.error_code || "")}</td></tr>`).join("");
+  return (jobs || []).map((job) => `<tr><td><code>${esc(job.id)}</code></td><td>${esc(job.provider || "")}</td><td><span class="badge ${statusClass(job.status)}">${esc(job.status)}</span></td><td>${esc(job.created_at || "")}</td><td>${esc(job.error_code || "")}</td><td>${job.status === "queued" ? `<button class="button ghost compact danger" data-core-action="cancel" data-core-id="${esc(job.id)}">Cancel</button>` : ""}${["failed", "cancelled"].includes(job.status) ? `<button class="button ghost compact" data-core-action="retry" data-core-id="${esc(job.id)}">Retry</button>` : ""}</td></tr>`).join("");
 }
 
 async function refreshCoreJobs() {
@@ -55,6 +55,11 @@ async function refreshCoreJobs() {
     if (node) node.innerHTML = coreJobRows(payload.jobs);
   } catch (_) { /* legacy dashboard remains usable if the control plane is unavailable */ }
 }
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-core-action]");
+  if (button) coreJobAction(button.dataset.coreId, button.dataset.coreAction).catch(() => {});
+});
 
 async function coreJobAction(id, action) {
   await api(`/api/core/jobs/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });

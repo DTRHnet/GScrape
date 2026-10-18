@@ -6,6 +6,7 @@ import os
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Protocol, Sequence
 
@@ -96,7 +97,7 @@ class GmailProvider:
         if validated["progress_file"]:
             command.extend(["--progress-file", str(validated["progress_file"])])
         try:
-            result = subprocess.run(command, cwd=self.workdir, text=True, capture_output=True, timeout=3600)
+            result = self._run_bounded(command)
         except subprocess.TimeoutExpired:
             return {"provider": self.provider_id, "status": "failed", "exit_code": None,
                     "error_code": "scanner_timeout", "run_id": validated["run_id"],
@@ -111,6 +112,16 @@ class GmailProvider:
                 "stderr_lines": len(result.stderr.splitlines()),
                 "error_code": None if result.returncode == 0 else "scanner_exit_nonzero",
                 "matches": self._read_match_count(validated["log_file"]) if status == "ok" else None}
+
+    def _run_bounded(self, command: list[str], attempts: int = 2):
+        """Run the scanner with bounded retry for transient process failures."""
+        last = None
+        for attempt in range(attempts):
+            last = subprocess.run(command, cwd=self.workdir, text=True, capture_output=True, timeout=3600)
+            if last.returncode == 0 or attempt + 1 == attempts:
+                return last
+            time.sleep(0.25 * (attempt + 1))
+        return last
 
     @staticmethod
     def _read_match_count(log_file: Path) -> int:

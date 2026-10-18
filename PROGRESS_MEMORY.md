@@ -52,3 +52,14 @@ Updated: 2026-10-18
 
 Part 5 should focus on OAuth/session health, live authorized validation, provider retry
 policy, result pagination, and production deployment/observability controls.
+
+## Part 5 completion note
+
+- [x] Added bounded provider retry handling without automatic authorization.
+- [x] Added dashboard cancel/retry lifecycle controls.
+- [x] Added health/version metadata and bounded cleanup/event retention.
+- [x] Preserved redaction and explicit live-scan authorization boundaries.
+- [ ] Live Gmail validation and token refresh remain operator actions.
+
+Part 6 should focus on authorized end-to-end validation, OAuth account health, pagination
+telemetry, configurable retention, and production deployment hardening.
