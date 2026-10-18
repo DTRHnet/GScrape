@@ -43,6 +43,18 @@ function statusClass(status) {
   }[status] || "blue";
 }
 
+function coreJobRows(jobs) {
+  return (jobs || []).map((job) => `<tr><td><code>${esc(job.id)}</code></td><td>${esc(job.provider)}</td><td><span class="badge ${statusClass(job.status)}">${esc(job.status)}</span></td><td>${esc(job.created_at || "")}</td><td>${esc(job.error_code || "")}</td></tr>`).join("");
+}
+
+async function refreshCoreJobs() {
+  try {
+    const payload = await api("/api/core/jobs");
+    const node = document.querySelector("[data-core-jobs]");
+    if (node) node.innerHTML = coreJobRows(payload.jobs);
+  } catch (_) { /* legacy dashboard remains usable if the control plane is unavailable */ }
+}
+
 function selectedRunIds() {
   return [...state.selectedRuns].filter((id) => state.runs.some((run) => run.id === id));
 }
@@ -129,6 +141,7 @@ async function load() {
   state.selectedRuns = new Set([...state.selectedRuns].filter((id) => state.runs.some((run) => run.id === id)));
   state.logging = logging;
   render();
+  refreshCoreJobs();
 }
 
 async function refreshAccounts() {

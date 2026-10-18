@@ -2,6 +2,16 @@
 
 All notable changes are documented here. Versions follow semantic versioning.
 
+## [0.3.0] - 2026-10-18
+
+### Added
+
+- Added bounded Gmail job execution with account-derived session paths.
+- Added categorized scanner timeout, startup, and nonzero-exit failure metadata.
+- Added redacted match counts for successful Gmail jobs, including zero-match runs.
+- Added control-plane status polling hooks for dashboard consumers.
+- Added operational notes for controlled scans and explicit live authorization.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

@@ -185,3 +185,39 @@ class Database:
         )
         self.connection.commit()
         return job_id
+
+    def claim_job(self, job_id: str) -> bool:
+        """Atomically move a queued job to running."""
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """UPDATE jobs_v2 SET status = 'running', started_at = ?
+                   WHERE id = ? AND status = 'queued'""",
+                (utc_now(), job_id),
+            )
+            return cursor.rowcount == 1
+
+    def finish_job(self, job_id: str, status: str, error_code: Optional[str] = None) -> None:
+        """Finish a running job with a constrained terminal status."""
+        if status not in {"completed", "failed", "cancelled"}:
+            raise ValueError("job must finish as completed, failed, or cancelled")
+        with self.transaction() as connection:
+            connection.execute(
+                """UPDATE jobs_v2 SET status = ?, finished_at = ?, error_code = ?
+                   WHERE id = ? AND status = 'running'""",
+                (status, utc_now(), error_code, job_id),
+            )
+
+    def get_job(self, job_id: str) -> Optional[sqlite3.Row]:
+        """Return a job snapshot without exposing secret configuration values."""
+        return self.connection.execute(
+            "SELECT * FROM jobs_v2 WHERE id = ?", (job_id,)
+        ).fetchone()
+
+    def add_job_event(self, job_id: str, event_type: str, payload: Mapping[str, object]) -> None:
+        """Append a structured, non-secret job event."""
+        self.connection.execute(
+            """INSERT INTO job_events(job_id, event_type, payload_json, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (job_id, event_type, json.dumps(dict(payload), sort_keys=True), utc_now()),
+        )
+        self.connection.commit()

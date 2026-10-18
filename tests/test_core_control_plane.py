@@ -1,11 +1,14 @@
 import hashlib
 import tempfile
 import unittest
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.ports import allocate_loopback_port
 from core.storage import Database
+from core.async_jobs import AsyncJobRunner
+from core.providers import DemoProvider
 
 
 class CoreControlPlaneTests(unittest.TestCase):
@@ -49,6 +52,49 @@ class CoreControlPlaneTests(unittest.TestCase):
         port = allocate_loopback_port()
         self.assertGreaterEqual(port, 1)
         self.assertLessEqual(port, 65535)
+
+    def test_async_job_runner_persists_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.db"
+            with Database(path) as database:
+                database.ensure_provider("gmail", "Gmail")
+                database.connection.execute(
+                    "INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    ("account-1", "gmail", "example@example.invalid", "Example", "connected", "now"),
+                )
+                database.connection.commit()
+                job_id = database.create_job("account-1", {"operation": "scan"})
+            runner = AsyncJobRunner(str(path))
+            try:
+                result = runner.submit(job_id, DemoProvider().execute).result(timeout=3)
+                self.assertEqual(result["provider"], "demo")
+                self.assertEqual(result["status"], "ok")
+            finally:
+                runner.shutdown()
+            with Database(path) as database:
+                self.assertEqual(database.get_job(job_id)["status"], "completed")
+
+    def test_async_job_runner_persists_failure_without_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.db"
+            with Database(path) as database:
+                database.ensure_provider("gmail", "Gmail")
+                database.connection.execute(
+                    "INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    ("account-1", "gmail", "example@example.invalid", "Example", "connected", "now"),
+                )
+                database.connection.commit()
+                job_id = database.create_job("account-1", {"token": "not-persisted-by-runner"})
+            runner = AsyncJobRunner(str(path))
+            try:
+                with self.assertRaises(RuntimeError):
+                    runner.submit(job_id, lambda _config: (_ for _ in ()).throw(RuntimeError("synthetic failure"))).result(timeout=3)
+            finally:
+                runner.shutdown()
+            with Database(path) as database:
+                row = database.get_job(job_id)
+                self.assertEqual(row["status"], "failed")
+                self.assertEqual(row["error_code"], "RuntimeError")
 
 
 if __name__ == "__main__":

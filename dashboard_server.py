@@ -25,6 +25,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import gscrape
+from core.storage import Database
+from core.async_jobs import AsyncJobRunner
+from core.providers import DemoProvider, GmailProvider
 
 
 ROOT = Path(__file__).resolve().parent
@@ -45,6 +48,10 @@ DEFAULT_BEFORE_DATE = "2018/12/31"
 DEFAULT_LOG_CONFIG = {"level": "INFO", "max_bytes": 5 * 1024 * 1024, "backup_count": 5}
 LOGGER = logging.getLogger("gscrape.dashboard")
 ACTIVE_LOG_HANDLER = None
+CORE_JOB_RUNNER = AsyncJobRunner(str(DB_PATH))
+DEMO_PROVIDER = DemoProvider()
+GMAIL_PROVIDER = GmailProvider(SCANNER, ROOT, str(PYTHON if PYTHON.exists() else sys.executable), SESSION_DIR)
+CORE_PROVIDERS = {DEMO_PROVIDER.provider_id: DEMO_PROVIDER, GMAIL_PROVIDER.provider_id: GMAIL_PROVIDER}
 
 
 def configure_logging(level=None, max_bytes=None, backup_count=None):
@@ -200,6 +207,32 @@ def db():
     connection.execute("INSERT OR IGNORE INTO run_sequence(id, next_number) VALUES(1, 1)")
     connection.commit()
     return connection
+
+
+def core_job_snapshot(job_id=None):
+    """Read provider-neutral jobs without exposing configuration snapshots."""
+    with Database(DB_PATH) as database:
+        if job_id:
+            row = database.get_job(job_id)
+            rows = [row] if row else []
+        else:
+            rows = database.connection.execute(
+                "SELECT id, account_id, status, created_at, started_at, finished_at, error_code "
+                "FROM jobs_v2 ORDER BY created_at DESC LIMIT 100"
+            ).fetchall()
+        safe_fields = {
+            "id", "account_id", "status", "created_at", "started_at", "finished_at", "error_code"
+        }
+        jobs = [{key: row[key] for key in safe_fields if key in row.keys()} for row in rows]
+        events = {}
+        for job in jobs:
+            events[job["id"]] = [
+                dict(event) for event in database.connection.execute(
+                    "SELECT event_type, payload_json, created_at FROM job_events "
+                    "WHERE job_id=? ORDER BY id", (job["id"],)
+                )
+            ]
+    return {"jobs": jobs, "events": events}
 
 
 def allocate_run_id(connection):
@@ -619,7 +652,7 @@ def run_scan(run_id, config):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "GScrape/1.0"
+    server_version = "GScrape/1.1"
 
     def log_message(self, *_):
         return
@@ -696,6 +729,14 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if parsed.path == "/api/runs":
                 return json_response(self, {"runs": list_rows("runs")})
+            if parsed.path == "/api/core/jobs":
+                return json_response(self, core_job_snapshot())
+            if parsed.path.startswith("/api/core/jobs/"):
+                job_id = parsed.path.rsplit("/", 1)[-1]
+                snapshot = core_job_snapshot(job_id)
+                if not snapshot["jobs"]:
+                    return json_response(self, {"error": "job not found"}, 404)
+                return json_response(self, snapshot)
             if parsed.path == "/api/analysis":
                 records = load_all_run_records()
                 return json_response(self, {
@@ -952,6 +993,62 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 LOGGER.info("logging configuration updated")
                 return json_response(self, {"config": config})
+            if parsed.path == "/api/core/jobs":
+                if not isinstance(data, dict):
+                    raise ValueError("job request must be an object")
+                provider = str(data.get("provider", "demo")).strip().lower()
+                adapter = CORE_PROVIDERS.get(provider)
+                if adapter is None:
+                    raise ValueError("unsupported provider")
+                account_id = str(data.get("account_id", "demo-account")).strip()
+                if not account_id or len(account_id) > 128:
+                    raise ValueError("a valid account_id is required")
+                if provider == DEMO_PROVIDER.provider_id:
+                    operation = str(data.get("operation", "noop")).strip()
+                    if operation not in {"noop", "fail"}:
+                        raise ValueError("unsupported demo operation")
+                    job_config = {"operation": operation, "provider": provider}
+                    account_email = f"{account_id}@example.invalid"
+                    account_label = account_id[:100]
+                else:
+                    with Database(DB_PATH) as database:
+                        account_row = database.connection.execute(
+                            "SELECT email, label FROM accounts WHERE id=? AND status IN ('connected', 'authorizing')",
+                            (account_id,),
+                        ).fetchone()
+                    if account_row is None:
+                        raise ValueError("connected Gmail account was not found")
+                    session_file = SESSION_DIR / f"{account_id}.env"
+                    job_config = {
+                        "provider": provider,
+                        "account_id": account_id,
+                        "env_file": str(session_file),
+                        "categories": data.get("categories"),
+                        "query": data.get("query", ""),
+                        "after": data.get("after", DEFAULT_AFTER_DATE),
+                        "before": data.get("before", DEFAULT_BEFORE_DATE),
+                        "max_messages": data.get("max_messages", 100),
+                        "run_id": data.get("run_id", ""),
+                        "log_file": data.get("log_file", str(LOG_PATH)),
+                        "progress_file": data.get("progress_file", ""),
+                    }
+                    adapter._validate(job_config)
+                    account_email = account_row["email"]
+                    account_label = account_row["label"]
+                with Database(DB_PATH) as database:
+                    database.ensure_provider(provider, "Deterministic Demo Provider" if provider == "demo" else "Gmail")
+                    account = database.connection.execute(
+                        "SELECT id FROM accounts_v2 WHERE id=?", (account_id,)
+                    ).fetchone()
+                    if account is None:
+                        database.connection.execute(
+                            "INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at) VALUES (?, ?, ?, ?, 'connected', ?)",
+                            (account_id, provider, account_email, account_label, now()),
+                        )
+                        database.connection.commit()
+                    job_id = database.create_job(account_id, job_config)
+                CORE_JOB_RUNNER.submit(job_id, adapter.execute)
+                return json_response(self, {"id": job_id, "status": "queued", "provider": provider}, 202)
             if parsed.path == "/api/profiles":
                 config = validate_config(data)
                 profile_id = uuid.uuid4().hex
