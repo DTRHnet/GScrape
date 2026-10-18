@@ -237,6 +237,40 @@ def matched_categories(text: str, filenames: Sequence[str] = ()) -> List[str]:
     return [name for name, pattern in CATEGORY_PATTERNS.items() if pattern.search(haystack)]
 
 
+COMMON_ATTACHMENT_TYPES = {
+    "documents": {".pdf", ".doc", ".docx", ".odt", ".rtf", ".txt", ".csv"},
+    "spreadsheets": {".xls", ".xlsx", ".ods", ".csv"},
+    "archives": {".zip", ".7z", ".rar", ".tar", ".gz", ".bz2"},
+    "images": {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".webp"},
+    "wallets": {".dat", ".wallet", ".key", ".json", ".backup", ".bak", ".db", ".sqlite"},
+    "email": {".eml", ".msg"},
+}
+
+
+def normalize_attachment_extensions(values: Optional[Sequence[str]] = None) -> List[str]:
+    result = []
+    for value in values or ():
+        extension = str(value).strip().lower()
+        if extension and not extension.startswith("."):
+            extension = "." + extension
+        if extension and re.fullmatch(r"\.[a-z0-9][a-z0-9._-]{0,19}", extension):
+            result.append(extension)
+        elif extension:
+            raise ValueError("attachment extensions must be simple values such as .pdf or .dat")
+    return list(dict.fromkeys(result))
+
+
+def attachment_filter_matches(filenames: Sequence[str], extensions=(), filename_regex="") -> bool:
+    """Match attachment metadata only; attachment content is never downloaded."""
+    names = [str(name) for name in filenames]
+    if not names:
+        return False
+    selected = set(normalize_attachment_extensions(extensions))
+    pattern = re.compile(filename_regex, re.I) if filename_regex else None
+    return any((not selected or Path(name).suffix.lower() in selected)
+               and (pattern is None or pattern.search(Path(name).name)) for name in names)
+
+
 def normalize_category_selection(
     categories: Optional[Sequence[str]] = None,
     category: str = "all",
@@ -1429,6 +1463,10 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
     category_regexes = compile_category_regexes(
         json.loads(args.category_regex) if getattr(args, "category_regex", "") else {}
     )
+    attachment_extensions = normalize_attachment_extensions(getattr(args, "attachment_extensions", []))
+    attachment_filename_regex = getattr(args, "attachment_filename_regex", "")
+    if attachment_filename_regex:
+        re.compile(attachment_filename_regex, re.I)
     rate_limiter = AdaptiveRateLimiter(
         args.requests_per_second,
         args.rate_limit_max_delay,
@@ -1512,12 +1550,20 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
                 payload = message.get("payload", {})
                 body = normalized_text(text_from_part(payload))
                 filenames = attachment_names(payload)
+                attachment_match = attachment_filter_matches(
+                    filenames, attachment_extensions, attachment_filename_regex,
+                )
                 found = matched_categories(body, filenames)
                 haystack = normalized_text(body + " " + " ".join(filenames))
                 for category, pattern in category_regexes.items():
                     if pattern.search(haystack) and category not in found:
                         found.append(category)
                 found = [category for category in found if category in categories]
+                if attachment_extensions or attachment_filename_regex:
+                    if attachment_match:
+                        found.append("attachment")
+                    elif not found:
+                        continue
                 if not found:
                     continue
                 suspects = extract_wallet_and_recovery_suspects(body, filenames)
@@ -1625,6 +1671,8 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="JSON object of expert local regex overrides keyed by category",
     )
+    parser.add_argument("--attachment-extensions", default="", help="comma-separated attachment extensions, e.g. pdf,dat,zip")
+    parser.add_argument("--attachment-filename-regex", default="", help="case-insensitive regex matched against attachment filenames")
     parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
     parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")
@@ -1723,6 +1771,11 @@ def parse_args() -> argparse.Namespace:
         normalize_category_selection(args.categories, args.category)
         if args.category_regex:
             compile_category_regexes(json.loads(args.category_regex))
+        args.attachment_extensions = normalize_attachment_extensions(
+            [item for item in args.attachment_extensions.split(",") if item.strip()]
+        )
+        if args.attachment_filename_regex:
+            re.compile(args.attachment_filename_regex, re.I)
     except (ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
     return args

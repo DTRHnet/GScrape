@@ -49,7 +49,7 @@ class GmailProvider:
         self.allowed_root = Path(allowed_root or workdir).resolve()
 
     def _validate(self, config: Mapping[str, Any]) -> Dict[str, Any]:
-        allowed = {"account_id", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file"}
+        allowed = {"account_id", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex"}
         unknown = set(config) - allowed
         if unknown:
             raise ValueError("unsupported Gmail job fields")
@@ -78,11 +78,19 @@ class GmailProvider:
         before = str(config.get("before", "2018/12/31"))
         if not re.fullmatch(r"\d{4}/\d{2}/\d{2}", after) or not re.fullmatch(r"\d{4}/\d{2}/\d{2}", before):
             raise ValueError("Gmail dates must use YYYY/MM/DD")
+        extensions = config.get("attachment_extensions", [])
+        if isinstance(extensions, str):
+            extensions = extensions.split(",")
+        attachment_filename_regex = str(config.get("attachment_filename_regex", "")).strip()
+        if attachment_filename_regex:
+            re.compile(attachment_filename_regex, re.I)
         return {"env_file": env_file, "categories": categories, "query": query,
                 "after": after, "before": before,
                 "max_messages": max_messages, "run_id": str(config.get("run_id", "")),
                 "log_file": Path(str(config.get("log_file", self.workdir / "email-wallet-search.log"))),
-                "progress_file": Path(str(config.get("progress_file", "")))}
+                "progress_file": Path(str(config.get("progress_file", ""))),
+                "attachment_extensions": [str(item) for item in extensions],
+                "attachment_filename_regex": attachment_filename_regex}
 
     def execute(self, config: Dict[str, Any]) -> Dict[str, Any]:
         validated = self._validate(config)
@@ -96,6 +104,10 @@ class GmailProvider:
             command.extend(["--run-id", validated["run_id"]])
         if validated["progress_file"]:
             command.extend(["--progress-file", str(validated["progress_file"])])
+        if validated["attachment_extensions"]:
+            command.extend(["--attachment-extensions", ",".join(validated["attachment_extensions"])])
+        if validated["attachment_filename_regex"]:
+            command.extend(["--attachment-filename-regex", validated["attachment_filename_regex"]])
         try:
             result = self._run_bounded(command)
         except subprocess.TimeoutExpired:

@@ -118,6 +118,17 @@ class PatternTests(unittest.TestCase):
         part = {"filename": "wallet.dat", "parts": [{"filename": "backup.zip"}]}
         self.assertEqual(scanner.attachment_names(part), ["wallet.dat", "backup.zip"])
 
+    def test_attachment_filter_supports_multiple_extensions_and_regex(self):
+        self.assertTrue(scanner.attachment_filter_matches(
+            ["invoice-2024.PDF", "notes.txt"], ["pdf", ".dat"], r"invoice-\d+\.pdf$"
+        ))
+        self.assertFalse(scanner.attachment_filter_matches(["notes.txt"], ["pdf"]))
+
+    def test_attachment_extension_validation(self):
+        self.assertEqual(scanner.normalize_attachment_extensions(["PDF", ".dat", "pdf"]), [".pdf", ".dat"])
+        with self.assertRaises(ValueError):
+            scanner.normalize_attachment_extensions(["../secret"])
+
     def test_secret_like_metadata_redacted(self):
         self.assertNotIn("abcdef0123456789", scanner.redact_metadata("private key: abcdef0123456789"))
 

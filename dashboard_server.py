@@ -400,6 +400,19 @@ def validate_config(data):
             re.compile(regex)
         except re.error as error:
             raise ValueError(f"invalid regex: {error}") from error
+    raw_extensions = data.get("attachment_extensions", [])
+    if isinstance(raw_extensions, str):
+        raw_extensions = raw_extensions.split(",")
+    try:
+        attachment_extensions = gscrape.normalize_attachment_extensions(raw_extensions)
+    except ValueError as error:
+        raise ValueError(str(error)) from error
+    attachment_filename_regex = str(data.get("attachment_filename_regex", "")).strip()
+    if attachment_filename_regex:
+        try:
+            re.compile(attachment_filename_regex, re.I)
+        except re.error as error:
+            raise ValueError(f"invalid attachment filename regex: {error}") from error
     max_messages = int(data.get("max_messages", 1000))
     if not 1 <= max_messages <= 10_000:
         raise ValueError("max_messages must be between 1 and 10000")
@@ -424,6 +437,8 @@ def validate_config(data):
         "category_regex": {str(k): str(v) for k, v in regex_overrides.items() if str(v).strip()},
         "query": query,
         "regex": regex,
+        "attachment_extensions": attachment_extensions,
+        "attachment_filename_regex": attachment_filename_regex,
         "after_date": after_date,
         "before_date": before_date,
         "max_messages": max_messages,
@@ -584,6 +599,10 @@ def run_scan(run_id, config):
         "--requests-per-second", str(config["requests_per_second"]),
         "--rate-limit-max-delay", str(config["rate_limit_max_delay"]),
     ]
+    if config.get("attachment_extensions"):
+        args.extend(["--attachment-extensions", ",".join(config["attachment_extensions"])])
+    if config.get("attachment_filename_regex"):
+        args.extend(["--attachment-filename-regex", config["attachment_filename_regex"]])
     if config.get("category_regex"):
         args.extend(["--category-regex", json.dumps(config["category_regex"])])
     if config.get("after_date"):

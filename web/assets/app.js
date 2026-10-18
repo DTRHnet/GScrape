@@ -304,6 +304,11 @@ function render() {
             ["wallet", "Wallet terminology regex"],
           ].map(([value, label]) => `<label>${label}<input class="category-regex" data-category="${value}" placeholder="Optional regex"></label>`).join("")}</div>
         </div>
+        <div class="field full attachment-filter"><label>Attachment filename filters (optional)</label><p class="muted">Matches attachment names only; files are never downloaded. Select common types or enter extensions such as <code>.pdf,.dat</code>.</p>
+          <div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}"><span>${label}</span></label>`).join("")}</div>
+          <label>Custom file types<input name="attachment_extensions" placeholder="pdf,dat,custom"></label>
+          <label>Attachment filename regex<input name="attachment_filename_regex" placeholder="(?i)invoice[-_].+\\.pdf$"></label>
+        </div>
         <div class="field"><label>Maximum messages</label><input name="max_messages" type="number" value="1000" min="1" max="10000"></div>
         <div class="field"><label>Maximum Gmail requests/second</label><input name="requests_per_second" type="number" value="1" min="0" max="10" step="0.1"><p class="muted">Local pacing ceiling. 0 disables proactive pacing; quota errors still use bounded adaptive backoff.</p></div>
         <div class="field"><label>Maximum adaptive cooldown (seconds)</label><input name="rate_limit_max_delay" type="number" value="60" min="1" max="300" step="1"><p class="muted">Upper bound after rate-limit responses.</p></div>
@@ -398,6 +403,13 @@ function collectSearchConfig(form) {
   form.querySelectorAll(".category-regex").forEach((input) => {
     if (input.value.trim()) data.category_regex[input.dataset.category] = input.value.trim();
   });
+  const typeExtensions = new Set();
+  form.querySelectorAll('input[name="attachment_type"]:checked').forEach((input) => {
+    const groups = { documents: ["pdf","doc","docx","odt","rtf","txt","csv"], spreadsheets: ["xls","xlsx","ods","csv"], archives: ["zip","7z","rar","tar","gz","bz2"], images: ["jpg","jpeg","png","gif","tif","tiff","webp"], wallets: ["dat","wallet","key","json","backup","bak","db","sqlite"], email: ["eml","msg"] };
+    (groups[input.value] || []).forEach((extension) => typeExtensions.add(extension));
+  });
+  const custom = String(data.attachment_extensions || "").split(",").map((value) => value.trim()).filter(Boolean);
+  data.attachment_extensions = [...typeExtensions, ...custom];
   data.max_messages = Number(data.max_messages);
   data.requests_per_second = Number(data.requests_per_second);
   data.rate_limit_max_delay = Number(data.rate_limit_max_delay);
