@@ -261,3 +261,28 @@ class Database:
         )
         self.connection.commit()
         return cursor.rowcount
+
+    def update_account_health(self, account_id: str, status: str, verified_at: Optional[str] = None) -> bool:
+        """Persist non-secret provider health state after an operator-approved check."""
+        allowed = {"connected", "authorizing", "needs_authorization", "error", "disabled"}
+        if status not in allowed:
+            raise ValueError("unsupported account health status")
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE accounts_v2 SET status=?, last_verified_at=? WHERE id=?",
+                (status, verified_at or utc_now(), account_id),
+            )
+            return cursor.rowcount == 1
+
+    def list_job_events(self, job_id: str, limit: int = 100, before_id: Optional[int] = None):
+        """Return bounded event pages using an opaque numeric cursor."""
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        query = "SELECT id, event_type, payload_json, created_at FROM job_events WHERE job_id=?"
+        params = [job_id]
+        if before_id is not None:
+            query += " AND id < ?"
+            params.append(int(before_id))
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        return self.connection.execute(query, params).fetchall()

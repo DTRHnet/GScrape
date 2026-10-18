@@ -9,6 +9,7 @@ All notable changes are documented here. Versions follow semantic versioning.
 - Added non-secret account health snapshots and operational job metrics.
 - Added configurable result retention through `GSCRAPE_RETENTION_DAYS`.
 - Added operator-visible control-plane health details without exposing credentials.
+- Added bounded job-event cursor pagination and operator-approved account health updates.
 
 ## [0.6.0] - 2026-10-18
 

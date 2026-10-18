@@ -764,6 +764,19 @@ class Handler(BaseHTTPRequestHandler):
                 if not snapshot["jobs"]:
                     return json_response(self, {"error": "job not found"}, 404)
                 return json_response(self, snapshot)
+            if parsed.path.startswith("/api/core/jobs/") and parsed.path.endswith("/events"):
+                job_id = parsed.path.split("/")[4]
+                query = parse_qs(parsed.query)
+                try:
+                    limit = int(query.get("limit", [100])[0])
+                    before_id = query.get("before_id", [None])[0]
+                    before_id = int(before_id) if before_id else None
+                    with Database(DB_PATH) as database:
+                        events = database.list_job_events(job_id, limit, before_id)
+                    payload = [dict(event) for event in events]
+                    return json_response(self, {"events": payload, "next_before_id": payload[-1]["id"] if payload else None})
+                except (TypeError, ValueError):
+                    return json_response(self, {"error": "invalid event pagination"}, 400)
             if parsed.path == "/api/analysis":
                 records = load_all_run_records()
                 return json_response(self, {

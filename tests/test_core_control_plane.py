@@ -45,6 +45,25 @@ class CoreControlPlaneTests(unittest.TestCase):
                 self.assertEqual(len(rows), 2)
                 self.assertIn('"index": 3', rows[-1][0])
 
+    def test_event_pagination_and_account_health_update(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with Database(Path(directory) / "state.db") as database:
+                database.ensure_provider("demo", "Demo")
+                database.connection.execute(
+                    "INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    ("account-1", "demo", "example@example.invalid", "Example", "connected", "now"),
+                )
+                database.connection.commit()
+                job_id = database.create_job("account-1", {"operation": "noop"})
+                for index in range(3):
+                    database.add_job_event(job_id, "progress", {"index": index})
+                first = database.list_job_events(job_id, 2)
+                self.assertEqual(len(first), 2)
+                second = database.list_job_events(job_id, 2, first[-1]["id"])
+                self.assertEqual(len(second), 1)
+                self.assertTrue(database.update_account_health("account-1", "needs_authorization"))
+                self.assertEqual(database.connection.execute("SELECT status FROM accounts_v2 WHERE id='account-1'").fetchone()[0], "needs_authorization")
+
     def test_database_migrates_and_creates_queued_job_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             with Database(Path(directory) / "state.db") as database:

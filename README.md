@@ -25,6 +25,10 @@ operational counters at `/api/core/metrics`, and configurable generated-result
 retention through `GSCRAPE_RETENTION_DAYS` (default: 30 days). Gmail authorization
 and token refresh remain explicit operator actions.
 
+Job events are available through bounded cursor pagination at
+`/api/core/jobs/<id>/events?limit=100`; the returned `next_before_id` can be used
+for the next page. Event payloads remain redacted control-plane metadata.
+
 ## Overview
 
 GScrape is a self-hosted toolkit for quickly parsing your own email accounts.

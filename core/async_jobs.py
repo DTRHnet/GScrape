@@ -25,6 +25,7 @@ class AsyncJobRunner:
         self.database_path = database_path
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self._futures: Dict[str, Future] = {}
+        self.metrics = {"submitted": 0, "completed": 0, "failed": 0}
 
     def submit(self, job_id: str, operation: JobCallable) -> Future:
         """Claim and execute a queued job, or raise if it was already claimed."""
@@ -38,6 +39,7 @@ class AsyncJobRunner:
 
         future = self.executor.submit(self._execute, job_id, operation)
         self._futures[job_id] = future
+        self.metrics["submitted"] += 1
         return future
 
     def cancel(self, job_id: str) -> bool:
@@ -60,9 +62,11 @@ class AsyncJobRunner:
                              if key in {"provider", "status", "operation", "run_id", "matches", "error_code", "exit_code", "stderr_lines"}}
             with Database(self.database_path) as database:
                 if public_result.get("status") == "failed":
+                    self.metrics["failed"] += 1
                     database.finish_job(job_id, "failed", error_code=public_result.get("error_code", "provider_failed"))
                     database.add_job_event(job_id, "failed", public_result)
                 else:
+                    self.metrics["completed"] += 1
                     database.finish_job(job_id, "completed")
                     database.add_job_event(job_id, "completed", public_result)
                 database.prune_job_events()

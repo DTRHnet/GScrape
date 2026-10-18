@@ -68,5 +68,6 @@ telemetry, configurable retention, and production deployment hardening.
 
 - [x] Added account health diagnostics and operational metrics endpoints.
 - [x] Added configurable generated-result retention policy.
+- [x] Added bounded job-event cursor pagination and synthetic coverage.
 - [x] Kept OAuth refresh and live Gmail access explicitly operator-gated.
 - [ ] Complete authorized end-to-end Gmail validation and pagination telemetry.
