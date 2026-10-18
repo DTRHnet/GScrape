@@ -46,6 +46,8 @@ RESULTS_DIR = ROOT / "results"
 DEFAULT_AFTER_DATE = "2013/01/01"
 DEFAULT_BEFORE_DATE = "2018/12/31"
 DEFAULT_LOG_CONFIG = {"level": "INFO", "max_bytes": 5 * 1024 * 1024, "backup_count": 5}
+RETENTION_DAYS = int(os.environ.get("GSCRAPE_RETENTION_DAYS", "30"))
+METRICS = {"jobs_created": 0, "jobs_completed": 0, "jobs_failed": 0, "jobs_cancelled": 0}
 LOGGER = logging.getLogger("gscrape.dashboard")
 ACTIVE_LOG_HANDLER = None
 CORE_JOB_RUNNER = AsyncJobRunner(str(DB_PATH))
@@ -244,6 +246,15 @@ def cleanup_result_artifacts(max_age_days=30):
             shutil.rmtree(path)
             removed += 1
     return removed
+
+
+def account_health_snapshot():
+    """Return non-secret account connection health for operator review."""
+    with Database(DB_PATH) as database:
+        rows = database.connection.execute(
+            "SELECT id, provider_id, email, label, status, last_verified_at FROM accounts_v2 ORDER BY created_at DESC"
+        ).fetchall()
+    return [{key: row[key] for key in ("id", "provider_id", "email", "label", "status", "last_verified_at")} for row in rows]
 
 
 def allocate_run_id(connection):
@@ -744,7 +755,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/core/jobs":
                 return json_response(self, core_job_snapshot())
             if parsed.path == "/api/core/health":
-                return json_response(self, {"ok": True, "provider": "gmail", "live_scan": "operator_authorization_required"})
+                return json_response(self, {"ok": True, "provider": "gmail", "live_scan": "operator_authorization_required", "accounts": account_health_snapshot()})
+            if parsed.path == "/api/core/metrics":
+                return json_response(self, {"metrics": dict(METRICS), "retention_days": RETENTION_DAYS})
             if parsed.path.startswith("/api/core/jobs/") and parsed.path.count("/") == 4:
                 job_id = parsed.path.rsplit("/", 1)[-1]
                 snapshot = core_job_snapshot(job_id)
@@ -1061,12 +1074,14 @@ class Handler(BaseHTTPRequestHandler):
                         )
                         database.connection.commit()
                     job_id = database.create_job(account_id, job_config)
+                METRICS["jobs_created"] += 1
                 CORE_JOB_RUNNER.submit(job_id, adapter.execute)
                 return json_response(self, {"id": job_id, "status": "queued", "provider": provider}, 202)
             if parsed.path.startswith("/api/core/jobs/") and parsed.path.endswith("/cancel"):
                 job_id = parsed.path.split("/")[4]
                 if not CORE_JOB_RUNNER.cancel(job_id):
                     return json_response(self, {"error": "job is not queued or was not found"}, 409)
+                METRICS["jobs_cancelled"] += 1
                 return json_response(self, {"id": job_id, "status": "cancelled"})
             if parsed.path.startswith("/api/core/jobs/") and parsed.path.endswith("/retry"):
                 job_id = parsed.path.split("/")[4]
@@ -1076,7 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
                     return json_response(self, {"error": "only failed or cancelled jobs can be retried"}, 409)
                 return json_response(self, {"id": new_id, "status": "queued"}, 202)
             if parsed.path == "/api/core/cleanup":
-                return json_response(self, {"removed": cleanup_result_artifacts()})
+                return json_response(self, {"removed": cleanup_result_artifacts(RETENTION_DAYS)})
             if parsed.path == "/api/profiles":
                 config = validate_config(data)
                 profile_id = uuid.uuid4().hex

@@ -63,3 +63,10 @@ policy, result pagination, and production deployment/observability controls.
 
 Part 6 should focus on authorized end-to-end validation, OAuth account health, pagination
 telemetry, configurable retention, and production deployment hardening.
+
+## Part 6 progress
+
+- [x] Added account health diagnostics and operational metrics endpoints.
+- [x] Added configurable generated-result retention policy.
+- [x] Kept OAuth refresh and live Gmail access explicitly operator-gated.
+- [ ] Complete authorized end-to-end Gmail validation and pagination telemetry.

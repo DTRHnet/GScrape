@@ -28,6 +28,23 @@ class CoreControlPlaneTests(unittest.TestCase):
                 module.subprocess.run = original
             self.assertEqual(len(calls), 2)
 
+    def test_event_retention_keeps_newest_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with Database(Path(directory) / "state.db") as database:
+                database.ensure_provider("demo", "Demo")
+                database.connection.execute(
+                    "INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    ("account-1", "demo", "example@example.invalid", "Example", "connected", "now"),
+                )
+                database.connection.commit()
+                job_id = database.create_job("account-1", {"operation": "noop"})
+                for index in range(4):
+                    database.add_job_event(job_id, "progress", {"index": index})
+                self.assertEqual(database.prune_job_events(2), 2)
+                rows = database.connection.execute("SELECT payload_json FROM job_events ORDER BY id").fetchall()
+                self.assertEqual(len(rows), 2)
+                self.assertIn('"index": 3', rows[-1][0])
+
     def test_database_migrates_and_creates_queued_job_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             with Database(Path(directory) / "state.db") as database:
