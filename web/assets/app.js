@@ -40,6 +40,7 @@ function statusClass(status) {
     failed: "red",
     running: "blue",
     queued: "amber",
+    cancelled: "red",
   }[status] || "blue";
 }
 

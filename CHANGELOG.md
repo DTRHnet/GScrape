@@ -2,6 +2,15 @@
 
 All notable changes are documented here. Versions follow semantic versioning.
 
+## [0.5.0] - 2026-10-18
+
+### Added
+
+- Added bounded event retention and generated-result cleanup helpers.
+- Added control-plane health/status metadata and operator-gated live-scan state.
+- Added dashboard support for cancelled jobs and lifecycle action polling.
+- Added endpoint and lifecycle test coverage for the Part 4 safeguards.
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

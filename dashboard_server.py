@@ -229,10 +229,21 @@ def core_job_snapshot(job_id=None):
             events[job["id"]] = [
                 dict(event) for event in database.connection.execute(
                     "SELECT event_type, payload_json, created_at FROM job_events "
-                    "WHERE job_id=? ORDER BY id", (job["id"],)
+                    "WHERE job_id=? ORDER BY id DESC LIMIT 100", (job["id"],)
                 )
             ]
     return {"jobs": jobs, "events": events}
+
+def cleanup_result_artifacts(max_age_days=30):
+    """Remove only old generated result directories."""
+    cutoff = datetime.now(timezone.utc).timestamp() - max_age_days * 86400
+    removed = 0
+    for path in RESULTS_DIR.iterdir() if RESULTS_DIR.is_dir() else []:
+        if path.is_dir() and path.stat().st_mtime < cutoff:
+            import shutil
+            shutil.rmtree(path)
+            removed += 1
+    return removed
 
 
 def allocate_run_id(connection):
@@ -652,7 +663,7 @@ def run_scan(run_id, config):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "GScrape/1.2"
+    server_version = "GScrape/1.3"
 
     def log_message(self, *_):
         return
@@ -685,6 +696,7 @@ class Handler(BaseHTTPRequestHandler):
                     "scanner": SCANNER.name,
                     "local_only": True,
                     "database": str(DB_PATH.name),
+                    "version": "0.5.0",
                 })
             if parsed.path == "/api/profiles":
                 return json_response(self, {"profiles": list_rows("profiles")})
@@ -731,6 +743,8 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"runs": list_rows("runs")})
             if parsed.path == "/api/core/jobs":
                 return json_response(self, core_job_snapshot())
+            if parsed.path == "/api/core/health":
+                return json_response(self, {"ok": True, "provider": "gmail", "live_scan": "operator_authorization_required"})
             if parsed.path.startswith("/api/core/jobs/") and parsed.path.count("/") == 4:
                 job_id = parsed.path.rsplit("/", 1)[-1]
                 snapshot = core_job_snapshot(job_id)
@@ -1061,6 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not new_id:
                     return json_response(self, {"error": "only failed or cancelled jobs can be retried"}, 409)
                 return json_response(self, {"id": new_id, "status": "queued"}, 202)
+            if parsed.path == "/api/core/cleanup":
+                return json_response(self, {"removed": cleanup_result_artifacts()})
             if parsed.path == "/api/profiles":
                 config = validate_config(data)
                 profile_id = uuid.uuid4().hex

@@ -42,6 +42,13 @@ Updated: 2026-10-18
 - [x] Updated dashboard/server version to 0.4.0 milestone.
 - [ ] Authorized live Gmail scan remains operator-gated and requires an existing authorized session.
 
-Part 4 should focus on live operational validation, account health/token refresh, richer
-dashboard controls, bounded result retention, and resilience testing against Gmail API
-rate limits and pagination.
+## Part 4 completion note
+
+- [x] Added operator-gated live-scan health/status reporting.
+- [x] Added durable cancellation/retry dashboard hooks.
+- [x] Added bounded event retention and generated-result cleanup.
+- [x] Added endpoint/lifecycle test coverage and versioned operational notes.
+- [ ] Live Gmail validation remains pending an explicitly authorized session.
+
+Part 5 should focus on OAuth/session health, live authorized validation, provider retry
+policy, result pagination, and production deployment/observability controls.

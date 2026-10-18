@@ -250,3 +250,14 @@ class Database:
             (job_id, event_type, json.dumps(dict(payload), sort_keys=True), utc_now()),
         )
         self.connection.commit()
+
+    def prune_job_events(self, keep: int = 500) -> int:
+        """Bound event retention while preserving the newest events."""
+        if keep < 1:
+            raise ValueError("keep must be positive")
+        cursor = self.connection.execute(
+            "DELETE FROM job_events WHERE id NOT IN (SELECT id FROM job_events ORDER BY id DESC LIMIT ?)",
+            (keep,),
+        )
+        self.connection.commit()
+        return cursor.rowcount

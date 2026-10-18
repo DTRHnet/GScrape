@@ -65,6 +65,7 @@ class AsyncJobRunner:
                 else:
                     database.finish_job(job_id, "completed")
                     database.add_job_event(job_id, "completed", public_result)
+                database.prune_job_events()
             return public_result
         except Exception as error:
             with Database(self.database_path) as database:
