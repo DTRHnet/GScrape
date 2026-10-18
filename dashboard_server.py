@@ -78,7 +78,8 @@ def configure_logging(level=None, max_bytes=None, backup_count=None):
     if not 1 <= config["backup_count"] <= 20:
         raise ValueError("backup_count must be between 1 and 20")
 
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     if ACTIVE_LOG_HANDLER:
         LOGGER.removeHandler(ACTIVE_LOG_HANDLER)
         ACTIVE_LOG_HANDLER.close()
@@ -1277,9 +1278,17 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 
 
 def main():
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    configure_logging()
     db().close()
     print(f"GScrape dashboard: http://{HOST}:{PORT}/")
-    ReusableThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    server = ReusableThreadingHTTPServer((HOST, PORT), Handler)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        CORE_JOB_RUNNER.shutdown(wait=True)
 
 
 if __name__ == "__main__":

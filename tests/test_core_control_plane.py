@@ -64,6 +64,14 @@ class CoreControlPlaneTests(unittest.TestCase):
                 self.assertTrue(database.update_account_health("account-1", "needs_authorization"))
                 self.assertEqual(database.connection.execute("SELECT status FROM accounts_v2 WHERE id='account-1'").fetchone()[0], "needs_authorization")
 
+    def test_database_can_open_after_wal_sidecars_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.db"
+            with Database(path) as database:
+                database.ensure_provider("demo", "Demo")
+            with Database(path) as database:
+                self.assertIsNotNone(database.connection.execute("SELECT 1").fetchone())
+
     def test_database_migrates_and_creates_queued_job_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             with Database(Path(directory) / "state.db") as database:
