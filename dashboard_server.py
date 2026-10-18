@@ -366,17 +366,18 @@ def read_json(handler):
 
 def validate_config(data):
     category = str(data.get("category", "all"))
+    attachment_discovery = bool(data.get("attachment_discovery", False))
     allowed = {"all", *gscrape.CATEGORY_PATTERNS}
     if category not in allowed:
         raise ValueError("unsupported category")
     raw_categories = data.get("categories")
     if raw_categories is None:
-        categories = list(gscrape.CATEGORY_PATTERNS) if category == "all" else [category]
+        categories = [] if attachment_discovery else (list(gscrape.CATEGORY_PATTERNS) if category == "all" else [category])
     elif isinstance(raw_categories, list):
         categories = [str(item).strip() for item in raw_categories if str(item).strip()]
     else:
         categories = [item.strip() for item in str(raw_categories).split(",") if item.strip()]
-    if not categories:
+    if not categories and not attachment_discovery:
         raise ValueError("select at least one discovery category")
     if any(item not in gscrape.CATEGORY_PATTERNS for item in categories):
         raise ValueError("unsupported discovery category")
@@ -408,7 +409,10 @@ def validate_config(data):
     except ValueError as error:
         raise ValueError(str(error)) from error
     attachment_filename_regex = str(data.get("attachment_filename_regex", "")).strip()
-    attachment_discovery = bool(data.get("attachment_discovery", False))
+    if attachment_discovery and not categories:
+        categories = []
+    if not categories and not attachment_discovery:
+        raise ValueError("select at least one discovery category or enable attachment discovery")
     if not attachment_discovery:
         attachment_extensions = []
         attachment_filename_regex = ""

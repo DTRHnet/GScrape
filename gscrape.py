@@ -1458,7 +1458,7 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
     categories = normalize_category_selection(
         getattr(args, "categories", None),
         getattr(args, "category", "all"),
-    )
+    ) if not getattr(args, "attachment_discovery", False) or getattr(args, "categories", None) else []
     categories = [category for category in priority if category in categories]
     category_regexes = compile_category_regexes(
         json.loads(args.category_regex) if getattr(args, "category_regex", "") else {}
@@ -1483,6 +1483,8 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
         if args.query
         else [(category, query) for category in categories for query in SEARCH_PASSES[category]]
     )
+    if not query_passes and getattr(args, "attachment_discovery", False):
+        query_passes = [("attachment", "has:attachment")]
     if getattr(args, "verbose", False):
         print(
             f"[search] categories={','.join(categories)} passes={len(query_passes)} "
@@ -1559,7 +1561,7 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
                     if pattern.search(haystack) and category not in found:
                         found.append(category)
                 found = [category for category in found if category in categories]
-                if attachment_extensions or attachment_filename_regex:
+                if getattr(args, "attachment_discovery", False):
                     if attachment_match:
                         found.append("attachment")
                     elif not found:
@@ -1673,6 +1675,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--attachment-extensions", default="", help="comma-separated attachment extensions, e.g. pdf,dat,zip")
     parser.add_argument("--attachment-filename-regex", default="", help="case-insensitive regex matched against attachment filenames")
+    parser.add_argument("--attachment-discovery", action="store_true", help="treat attachment filename discovery as a standalone search mode")
     parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
     parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")

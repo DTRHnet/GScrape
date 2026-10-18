@@ -66,7 +66,10 @@ class GmailProvider:
         if not isinstance(categories, Sequence) or isinstance(categories, (bytes, str)):
             raise ValueError("categories must be a list")
         categories = [str(item) for item in categories]
-        if not categories or set(categories) - self.allowed_categories:
+        attachment_discovery = bool(config.get("attachment_discovery", False))
+        if not categories and not attachment_discovery:
+            raise ValueError("unsupported Gmail category")
+        if set(categories) - self.allowed_categories:
             raise ValueError("unsupported Gmail category")
         max_messages = int(config.get("max_messages", 100))
         if not 1 <= max_messages <= 10000:
@@ -90,6 +93,7 @@ class GmailProvider:
                 "log_file": Path(str(config.get("log_file", self.workdir / "email-wallet-search.log"))),
                 "progress_file": Path(str(config.get("progress_file", ""))),
                 "attachment_extensions": [str(item) for item in extensions],
+                "attachment_discovery": attachment_discovery,
                 "attachment_filename_regex": attachment_filename_regex}
 
     def execute(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -108,6 +112,8 @@ class GmailProvider:
             command.extend(["--attachment-extensions", ",".join(validated["attachment_extensions"])])
         if validated["attachment_filename_regex"]:
             command.extend(["--attachment-filename-regex", validated["attachment_filename_regex"]])
+        if validated["attachment_discovery"]:
+            command.append("--attachment-discovery")
         try:
             result = self._run_bounded(command)
         except subprocess.TimeoutExpired:

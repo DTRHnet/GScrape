@@ -411,7 +411,8 @@ function toggleAttachmentDiscovery(toggle) {
 function collectSearchConfig(form) {
   const data = Object.fromEntries(new FormData(form));
   data.categories = [...form.querySelectorAll('input[name="categories"]:checked')].map((input) => input.value);
-  if (!data.categories.length) throw Error("Select at least one discovery section.");
+  const attachmentDiscovery = form.querySelector('input[name="attachment_discovery"]')?.checked === true;
+  if (!data.categories.length && !attachmentDiscovery) throw Error("Select at least one discovery section or enable attachment discovery.");
   data.category = data.categories.length === 7 ? "all" : data.categories[0];
   data.category_regex = {};
   form.querySelectorAll(".category-regex").forEach((input) => {
@@ -424,7 +425,7 @@ function collectSearchConfig(form) {
   });
   const custom = String(data.attachment_extensions || "").split(",").map((value) => value.trim()).filter(Boolean);
   data.attachment_extensions = [...typeExtensions, ...custom];
-  data.attachment_discovery = form.querySelector('input[name="attachment_discovery"]')?.checked === true;
+  data.attachment_discovery = attachmentDiscovery;
   if (!data.attachment_discovery) {
     data.attachment_extensions = [];
     data.attachment_filename_regex = "";

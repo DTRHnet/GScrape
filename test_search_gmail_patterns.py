@@ -60,6 +60,13 @@ class PatternTests(unittest.TestCase):
         self.assertTrue(enabled["attachment_discovery"])
         self.assertEqual(enabled["attachment_extensions"], [".pdf"])
 
+    def test_dashboard_allows_attachment_only_search(self):
+        config = dashboard_server.validate_config({
+            "attachment_discovery": True,
+            "attachment_extensions": ["pdf"],
+        })
+        self.assertEqual(config["categories"], [])
+
     def test_dashboard_rejects_unsafe_rate_limit_values(self):
         with self.assertRaises(ValueError):
             dashboard_server.validate_config({"requests_per_second": "11"})
