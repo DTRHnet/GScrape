@@ -408,6 +408,10 @@ def validate_config(data):
     except ValueError as error:
         raise ValueError(str(error)) from error
     attachment_filename_regex = str(data.get("attachment_filename_regex", "")).strip()
+    attachment_discovery = bool(data.get("attachment_discovery", False))
+    if not attachment_discovery:
+        attachment_extensions = []
+        attachment_filename_regex = ""
     if attachment_filename_regex:
         try:
             re.compile(attachment_filename_regex, re.I)
@@ -439,6 +443,7 @@ def validate_config(data):
         "regex": regex,
         "attachment_extensions": attachment_extensions,
         "attachment_filename_regex": attachment_filename_regex,
+        "attachment_discovery": attachment_discovery,
         "after_date": after_date,
         "before_date": before_date,
         "max_messages": max_messages,

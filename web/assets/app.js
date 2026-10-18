@@ -304,10 +304,10 @@ function render() {
             ["wallet", "Wallet terminology regex"],
           ].map(([value, label]) => `<label>${label}<input class="category-regex" data-category="${value}" placeholder="Optional regex"></label>`).join("")}</div>
         </div>
-        <div class="field full attachment-filter"><label>Attachment filename filters (optional)</label><p class="muted">Matches attachment names only; files are never downloaded. Select common types or enter extensions such as <code>.pdf,.dat</code>.</p>
-          <div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}"><span>${label}</span></label>`).join("")}</div>
+        <div class="field full attachment-filter"><div class="section-head"><label><input type="checkbox" name="attachment_discovery" value="on" onchange="toggleAttachmentDiscovery(this)"> Enable attachment discovery</label><span class="badge">Metadata only</span></div><p class="muted">When enabled, GScrape searches attachment filenames without downloading or opening files. Select common types or enter extensions such as <code>.pdf,.dat</code>.</p>
+          <div data-attachment-options aria-disabled="true" style="opacity:.55;pointer-events:none"><div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}"><span>${label}</span></label>`).join("")}</div>
           <label>Custom file types<input name="attachment_extensions" placeholder="pdf,dat,custom"></label>
-          <label>Attachment filename regex<input name="attachment_filename_regex" placeholder="(?i)invoice[-_].+\\.pdf$"></label>
+          <label>Attachment filename regex<input name="attachment_filename_regex" placeholder="invoice[-_].+\\.pdf$"></label></div>
         </div>
         <div class="field"><label>Maximum messages</label><input name="max_messages" type="number" value="1000" min="1" max="10000"></div>
         <div class="field"><label>Maximum Gmail requests/second</label><input name="requests_per_second" type="number" value="1" min="0" max="10" step="0.1"><p class="muted">Local pacing ceiling. 0 disables proactive pacing; quota errors still use bounded adaptive backoff.</p></div>
@@ -394,6 +394,20 @@ function setCategories(selected) {
   });
 }
 
+function toggleAttachmentDiscovery(toggle) {
+  const options = document.querySelector("[data-attachment-options]");
+  if (!options) return;
+  options.setAttribute("aria-disabled", String(!toggle.checked));
+  options.style.opacity = toggle.checked ? "1" : ".55";
+  options.style.pointerEvents = toggle.checked ? "auto" : "none";
+  if (!toggle.checked) {
+    options.querySelectorAll("input").forEach((input) => {
+      if (input.type === "checkbox") input.checked = false;
+      else input.value = "";
+    });
+  }
+}
+
 function collectSearchConfig(form) {
   const data = Object.fromEntries(new FormData(form));
   data.categories = [...form.querySelectorAll('input[name="categories"]:checked')].map((input) => input.value);
@@ -410,6 +424,11 @@ function collectSearchConfig(form) {
   });
   const custom = String(data.attachment_extensions || "").split(",").map((value) => value.trim()).filter(Boolean);
   data.attachment_extensions = [...typeExtensions, ...custom];
+  data.attachment_discovery = form.querySelector('input[name="attachment_discovery"]')?.checked === true;
+  if (!data.attachment_discovery) {
+    data.attachment_extensions = [];
+    data.attachment_filename_regex = "";
+  }
   data.max_messages = Number(data.max_messages);
   data.requests_per_second = Number(data.requests_per_second);
   data.rate_limit_max_delay = Number(data.rate_limit_max_delay);

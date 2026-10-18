@@ -46,6 +46,20 @@ class PatternTests(unittest.TestCase):
         self.assertEqual(config["requests_per_second"], 0.5)
         self.assertEqual(config["rate_limit_max_delay"], 90.0)
 
+    def test_dashboard_attachment_discovery_is_explicitly_enabled(self):
+        config = dashboard_server.validate_config({
+            "attachment_extensions": ["pdf", "dat"],
+            "attachment_filename_regex": r"invoice-\d+\.pdf$",
+        })
+        self.assertFalse(config["attachment_discovery"])
+        self.assertEqual(config["attachment_extensions"], [])
+        enabled = dashboard_server.validate_config({
+            "attachment_discovery": True,
+            "attachment_extensions": ["pdf"],
+        })
+        self.assertTrue(enabled["attachment_discovery"])
+        self.assertEqual(enabled["attachment_extensions"], [".pdf"])
+
     def test_dashboard_rejects_unsafe_rate_limit_values(self):
         with self.assertRaises(ValueError):
             dashboard_server.validate_config({"requests_per_second": "11"})
