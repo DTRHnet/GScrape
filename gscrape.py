@@ -45,6 +45,8 @@ CATEGORY_PATTERNS = {
     "phone": re.compile(r"(?<!\w)(?:\+?1[\s.-]?)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[\s.-]?\d{3}[\s.-]?\d{4}(?!\w)"),
 }
 CATEGORY_NAMES = tuple(CATEGORY_PATTERNS)
+SEARCH_DOMAINS = {"attachments": "Attachments", "phone-numbers": "Phone Numbers", "contacts": "Contacts", "content": "Content", "crypto": "Crypto", "identity": "Identity"}
+LEGACY_CATEGORY_ALIASES = {"gourl": "content", "wallet": "crypto", "seed": "crypto", "wallet-file": "crypto", "crypto-address": "crypto-address", "phone": "phone-numbers", "identity": "identity"}
 SEARCH_PASSES = {
     "gourl": ['gourl OR "go url" OR "gourl.io" OR "gourl dot io"', '"go-url" OR "go_url" OR "g o u r l" OR "gourl io"'],
     "wallet": ['wallet OR "bitcoin core" OR electrum OR multibit OR "paper wallet"', 'cryptocurrency OR blockchain OR bitcoin OR ethereum OR litecoin OR dogecoin', 'trezor OR ledger OR exodus OR armory OR keystore OR "cold storage"', '"wallet backup" OR "wallet.dat" OR "private key" OR "public key"'],
@@ -235,6 +237,23 @@ def matched_categories(text: str, filenames: Sequence[str] = ()) -> List[str]:
     """
     haystack = normalized_text(text + " " + " ".join(filenames))
     return [name for name, pattern in CATEGORY_PATTERNS.items() if pattern.search(haystack)]
+
+
+def normalize_search_domains(domains: Optional[Sequence[str]] = None) -> List[str]:
+    selected = [str(item).strip() for item in (domains or ()) if str(item).strip()]
+    invalid = sorted(set(selected) - set(SEARCH_DOMAINS))
+    if invalid:
+        raise ValueError(f"unsupported search domain: {invalid[0]}")
+    return [name for name in SEARCH_DOMAINS if name in selected]
+
+
+def domains_for_categories(categories: Sequence[str], attachment_discovery: bool = False) -> List[str]:
+    domains = ["attachments"] if attachment_discovery else []
+    for category in categories:
+        domain = LEGACY_CATEGORY_ALIASES.get(category)
+        if domain and domain not in domains:
+            domains.append(domain)
+    return domains
 
 
 COMMON_ATTACHMENT_TYPES = {
@@ -1668,6 +1687,7 @@ def parse_args() -> argparse.Namespace:
         "--categories",
         help="comma-separated categories; overrides --category",
     )
+    parser.add_argument("--domain", action="append", choices=sorted(SEARCH_DOMAINS), help="user-facing search domain")
     parser.add_argument(
         "--category-regex",
         default="",

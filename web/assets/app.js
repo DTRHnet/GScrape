@@ -290,10 +290,8 @@ function render() {
         <div class="field full category-picker"><div class="section-head"><label>Discovery sections</label><div class="actions inline-actions"><button type="button" class="button ghost" onclick="setCategories(true)">Select all</button><button type="button" class="button ghost" onclick="setCategories(false)">Clear</button></div></div>
           <p class="muted">Choose one or more. Nothing is selected by default, so each scan only runs the sections you intend.</p>
           <div class="category-grid">${[
-            ["gourl", "GoURL / service references"], ["wallet", "Crypto & wallets"],
-            ["seed", "Recovery terms"], ["wallet-file", "Wallet files"],
-            ["crypto-address", "Address-shaped candidates"], ["identity", "Identity variants"],
-            ["phone", "Phone numbers"],
+            ["attachments", "Attachments"], ["phone-numbers", "Phone Numbers"], ["contacts", "Contacts"],
+            ["content", "Content"], ["crypto", "Crypto"], ["identity", "Identity"],
           ].map(([value, label]) => `<label class="category-option"><input type="checkbox" name="categories" value="${value}"><span>${label}</span></label>`).join("")}</div>
         </div>
         <div class="field full expert-options"><label>Expert regex overrides (optional)</label><p class="muted">These are local, case-insensitive additions to the selected detector. Use one pattern per section; leave blank to keep the safe default.</p>
@@ -410,10 +408,12 @@ function toggleAttachmentDiscovery(toggle) {
 
 function collectSearchConfig(form) {
   const data = Object.fromEntries(new FormData(form));
-  data.categories = [...form.querySelectorAll('input[name="categories"]:checked')].map((input) => input.value);
+  data.domains = [...form.querySelectorAll('input[name="domains"]:checked')].map((input) => input.value);
   const attachmentDiscovery = form.querySelector('input[name="attachment_discovery"]')?.checked === true;
-  if (!data.categories.length && !attachmentDiscovery) throw Error("Select at least one discovery section or enable attachment discovery.");
-  data.category = data.categories.length === 7 ? "all" : data.categories[0];
+  if (!data.domains.length && !attachmentDiscovery) throw Error("Select at least one search domain.");
+  data.attachment_discovery = data.domains.includes("attachments") || attachmentDiscovery;
+  data.categories = data.domains.includes("crypto") ? ["wallet", "seed", "wallet-file", "crypto-address", "gourl"] : [];
+  data.category = data.categories.length === 7 ? "all" : (data.categories[0] || "all");
   data.category_regex = {};
   form.querySelectorAll(".category-regex").forEach((input) => {
     if (input.value.trim()) data.category_regex[input.dataset.category] = input.value.trim();

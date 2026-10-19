@@ -34,6 +34,17 @@ Validation: `python -m py_compile core/*.py tests/test_core_control_plane.py gsc
 
 Updated: 2026-10-18
 
+## Phase 1 completion note
+
+- [x] Added canonical user-facing domains: Attachments, Phone Numbers, Contacts, Content, Crypto, and Identity.
+- [x] Added domain normalization and legacy detector compatibility mappings.
+- [x] Updated dashboard search selection to present domains while preserving legacy scanner categories internally.
+- [x] Added domain forwarding to bounded dashboard scans; no attachment acquisition or persistence changes were made.
+- [ ] Domain-specific provider query planning and normalized persistence remain Phase 2 work.
+
+Validation: `python -m py_compile gscrape.py dashboard_server.py`; `python -m unittest discover -v`.
+Updated: 2026-10-19
+
 ## Part 3 completion note
 
 - [x] Added durable cancellation and retry primitives.

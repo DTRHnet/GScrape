@@ -367,6 +367,10 @@ def read_json(handler):
 def validate_config(data):
     category = str(data.get("category", "all"))
     attachment_discovery = bool(data.get("attachment_discovery", False))
+    raw_domains = data.get("domains", [])
+    if isinstance(raw_domains, str):
+        raw_domains = raw_domains.split(",")
+    domains = gscrape.normalize_search_domains(raw_domains)
     allowed = {"all", *gscrape.CATEGORY_PATTERNS}
     if category not in allowed:
         raise ValueError("unsupported category")
@@ -448,6 +452,7 @@ def validate_config(data):
         "attachment_extensions": attachment_extensions,
         "attachment_filename_regex": attachment_filename_regex,
         "attachment_discovery": attachment_discovery,
+        "domains": domains or gscrape.domains_for_categories(categories, attachment_discovery),
         "after_date": after_date,
         "before_date": before_date,
         "max_messages": max_messages,
@@ -608,6 +613,8 @@ def run_scan(run_id, config):
         "--requests-per-second", str(config["requests_per_second"]),
         "--rate-limit-max-delay", str(config["rate_limit_max_delay"]),
     ]
+    for domain in config.get("domains", []):
+        args.extend(["--domain", domain])
     if config.get("attachment_extensions"):
         args.extend(["--attachment-extensions", ",".join(config["attachment_extensions"])])
     if config.get("attachment_filename_regex"):
