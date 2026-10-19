@@ -91,21 +91,11 @@ class PatternTests(unittest.TestCase):
             "acquire_attachments": True,
         })
         self.assertTrue(config["attachment_discovery"])
-        self.assertTrue(config["acquire_attachments"])
+        self.assertFalse(config["acquire_attachments"])
 
-    def test_dashboard_acquire_attachments_requires_discovery(self):
-        with self.assertRaises(ValueError):
-            dashboard_server.validate_config({
-                "acquire_attachments": True,
-                "categories": ["wallet"],
-            })
-        config = dashboard_server.validate_config({
-            "attachment_discovery": True,
-            "attachment_extensions": ["jpg", "jpeg"],
-            "acquire_attachments": True,
-        })
-        self.assertTrue(config["acquire_attachments"])
-        self.assertEqual(config["attachment_extensions"], [".jpg", ".jpeg"])
+    def test_dashboard_legacy_acquisition_setting_is_normalized(self):
+        config = dashboard_server.validate_config({"acquire_attachments": True})
+        self.assertFalse(config["acquire_attachments"])
 
     def test_account_connection_requires_matching_profile(self):
         with tempfile.TemporaryDirectory() as directory:

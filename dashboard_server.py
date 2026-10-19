@@ -754,9 +754,10 @@ def validate_config(data):
             raise ValueError(f"invalid attachment filename regex: {error}") from error
     # Discovery and acquisition are separate: selecting Images enumerates
     # image metadata, but must never implicitly download image bytes.
-    acquire_attachments = bool(data.get("acquire_attachments", False))
-    if acquire_attachments and not attachment_discovery:
-        raise ValueError("attachment acquisition requires attachment discovery")
+    # Legacy clients may still submit this field. Account scans are always
+    # metadata-only, so normalize it away instead of allowing stale settings to
+    # affect validation or execution.
+    acquire_attachments = False
     # Blank / missing max_messages means "no practical limit" (ceiling), not int("").
     raw_max_messages = data.get("max_messages", None)
     if isinstance(raw_max_messages, str):
