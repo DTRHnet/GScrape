@@ -100,12 +100,12 @@ function attachmentCards(runId, match) {
       item.sha256 ? `sha256 ${String(item.sha256).slice(0, 12)}…` : "",
     ].filter(Boolean).join(" · ");
     const thumb = item.thumbnail_url
-      ? `<a class="attachment-thumb" href="${esc(item.download_url || item.thumbnail_url)}" target="_blank" rel="noopener"><img src="${esc(item.thumbnail_url)}" alt="${label}" loading="lazy"></a>`
+      ? `<a class="attachment-thumb" href="${esc(item.download_url || item.thumbnail_url)}" target="_blank" rel="noopener" aria-label="Open ${label}"><img src="${esc(item.thumbnail_url)}" alt="${label}" loading="lazy" decoding="async"></a>`
       : `<div class="attachment-thumb placeholder">${label.slice(0, 1).toUpperCase()}</div>`;
     const download = item.download_url
       ? `<a class="button ghost compact" href="${esc(item.download_url)}" download>Download</a>`
       : "";
-    return `<article class="attachment-card">${thumb}<div><strong title="${label}">${label}</strong><div class="muted">${esc(meta)}</div><div class="row-actions">${download}</div></div></article>`;
+    return `<article class="attachment-card">${thumb}<div class="attachment-info"><strong title="${label}">${label}</strong><div class="muted">${esc(meta)}</div><div class="row-actions">${download}${item.thumbnail_url ? `<a class="button ghost compact" href="${esc(item.thumbnail_url)}" target="_blank" rel="noopener">Expand</a>` : ""}</div></div></article>`;
   }).join("")}</div>`;
 }
 
@@ -165,6 +165,9 @@ function runRows({ idPrefix = "runs" } = {}) {
           </div>
         </div>
         <div class="run-actions" onclick="event.stopPropagation()">
+          ${["queued", "running"].includes(run.status) ? `<button class="button ghost compact danger" type="button" data-run-action="stop" data-run-id="${esc(run.id)}">Stop</button>` : ""}
+          ${run.status === "cancelled" ? `<button class="button ghost compact" type="button" data-run-action="resume" data-run-id="${esc(run.id)}">Resume</button>` : ""}
+          ${["failed", "cancelled"].includes(run.status) ? `<button class="button ghost compact" type="button" data-run-action="retry" data-run-id="${esc(run.id)}">Retry</button>` : ""}
           <button class="button ghost compact danger" type="button" data-run-action="delete" data-run-id="${esc(run.id)}">Remove</button>
         </div>
       </div>
@@ -272,6 +275,15 @@ async function deleteRun(id) {
   } catch (error) { alert(error.message); }
 }
 
+async function changeRunState(id, action) {
+  const labels = { stop: "Stop this running scan?", resume: "Resume this stopped scan?", retry: "Retry this scan?" };
+  if (!confirm(labels[action])) return;
+  try {
+    await api(`/api/runs/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });
+    await load();
+  } catch (error) { alert(error.message); }
+}
+
 async function deleteSelectedRuns() {
   const ids = selectedRunIds();
   if (!ids.length) return;
@@ -362,7 +374,7 @@ function render() {
           <div data-attachment-options><div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}" disabled><span>${label}</span></label>`).join("")}</div>
           <label>Custom file types<input name="attachment_extensions" disabled placeholder="pdf,dat,custom"></label>
           <label>Attachment filename regex<input name="attachment_filename_regex" disabled placeholder="invoice[-_].+\\.pdf$"></label>
-          <label class="category-option acquire-option"><input type="checkbox" name="acquire_attachments" value="1" disabled><span>Acquire matching attachments for dashboard thumbnails and download</span></label></div>
+          <label class="category-option acquire-option"><input type="checkbox" name="acquire_attachments" value="1" checked disabled><span>Acquire matching attachments for dashboard thumbnails and download</span></label></div>
         </div>
         <div class="field full contact-filter" data-category-panel="contacts" hidden><div class="section-head"><strong>Contact filters</strong><span class="badge">Metadata only</span></div><p class="muted">Optionally narrow contacts by email address or domain. These filters inspect message metadata, not message bodies.</p>
           <label>Email address regex<input name="contact_email_regex" disabled placeholder=".+@example\\.com$"></label>
@@ -501,11 +513,14 @@ function collectSearchConfig(form) {
     data.acquire_attachments = false;
   }
   const rawMax = String(data.max_messages ?? "").trim();
-  data.max_messages = rawMax === "" ? "" : Number(rawMax);
+  if (rawMax === "") delete data.max_messages;
+  else data.max_messages = Number(rawMax);
   data.after_date = String(data.after_date || "").trim();
   data.before_date = String(data.before_date || "").trim();
-  data.requests_per_second = Number(data.requests_per_second);
-  data.rate_limit_max_delay = Number(data.rate_limit_max_delay);
+  const rawRps = String(data.requests_per_second ?? "").trim();
+  data.requests_per_second = rawRps === "" ? 1 : Number(rawRps);
+  const rawCooldown = String(data.rate_limit_max_delay ?? "").trim();
+  data.rate_limit_max_delay = rawCooldown === "" ? 60 : Number(rawCooldown);
   return data;
 }
 
@@ -676,6 +691,7 @@ document.addEventListener("click", (event) => {
     const id = runAction.dataset.runId;
     if (runAction.dataset.runAction === "details") showRun(id);
     if (runAction.dataset.runAction === "delete") deleteRun(id);
+    if (["stop", "resume", "retry"].includes(runAction.dataset.runAction)) changeRunState(id, runAction.dataset.runAction);
     return;
   }
   const runToggle = event.target.closest("[data-run-toggle]");

@@ -246,20 +246,43 @@ def attachment_parts(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_url: str,
                              api_key: Optional[str], access_token: str, output_dir: Path,
                              retries: int, rate_limiter: AdaptiveRateLimiter) -> Dict[str, Any]:
-    """Download one attachment into a new path; never open, extract, or log its bytes."""
+    """Download one attachment, reusing an existing file with the same SHA-256."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    index_path = output_dir / ".sha256-index.json"
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", attachment["filename"])[:180] or "attachment.bin"
     destination = output_dir / f"{message_id}_{safe_name}"
     if destination.exists():
         destination = output_dir / f"{message_id}_{hashlib.sha256(attachment['attachment_id'].encode()).hexdigest()[:12]}_{safe_name}"
     payload = request_json(f"{base_url}/{urllib.parse.quote(message_id, safe='')}/attachments/{urllib.parse.quote(attachment['attachment_id'], safe='')}", api_key, access_token, {}, retries=retries, rate_limiter=rate_limiter)
     raw = base64.urlsafe_b64decode((payload.get("data") or "") + "===")
+    digest = hashlib.sha256(raw).hexdigest()
+    index = {}
+    try:
+        loaded = json.loads(index_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            index = {str(key): str(value) for key, value in loaded.items()}
+    except (OSError, json.JSONDecodeError):
+        index = {}
+    existing_name = index.get(digest)
+    existing_path = output_dir / existing_name if existing_name else None
+    if existing_path and existing_path.is_file():
+        return {
+            "filename": safe_name,
+            "stored_name": existing_path.name,
+            "size_bytes": len(raw),
+            "sha256": digest,
+            "status": "deduplicated",
+        }
     destination.write_bytes(raw)
+    index[digest] = destination.name
+    temporary_index = index_path.with_suffix(".tmp")
+    temporary_index.write_text(json.dumps(index, sort_keys=True) + "\n", encoding="utf-8")
+    temporary_index.replace(index_path)
     return {
         "filename": safe_name,
         "stored_name": destination.name,
         "size_bytes": len(raw),
-        "sha256": hashlib.sha256(raw).hexdigest(),
+        "sha256": digest,
         "status": "acquired",
     }
 
@@ -1803,7 +1826,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attachment-extensions", default="", help="comma-separated attachment extensions, e.g. pdf,dat,zip")
     parser.add_argument("--attachment-filename-regex", default="", help="case-insensitive regex matched against attachment filenames")
     parser.add_argument("--attachment-discovery", action="store_true", help="treat attachment filename discovery as a standalone search mode")
-    parser.add_argument("--acquire-attachments", action="store_true", help="explicitly download matched attachment bytes; never opens or extracts files")
+    parser.add_argument("--acquire-attachments", action="store_true", help="download matched attachment bytes (enabled by dashboard defaults); never opens or extracts files")
     parser.add_argument("--attachment-output-dir", type=Path, default=Path("acquired-attachments"), help="new directory for explicitly acquired attachments")
     parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")

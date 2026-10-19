@@ -72,6 +72,7 @@ class PatternTests(unittest.TestCase):
             "attachment_extensions": ["pdf"],
         })
         self.assertEqual(config["categories"], [])
+        self.assertTrue(config["acquire_attachments"])
 
     def test_dashboard_acquire_attachments_requires_discovery(self):
         with self.assertRaises(ValueError):
@@ -345,6 +346,13 @@ class PatternTests(unittest.TestCase):
         config = dashboard_server.validate_config({"attachment_discovery": True})
         self.assertEqual(config["after_date"], "")
         self.assertEqual(config["before_date"], "")
+        self.assertEqual(config["max_messages"], 10000)
+
+    def test_dashboard_treats_blank_max_messages_as_unbounded(self):
+        config = dashboard_server.validate_config({
+            "attachment_discovery": True,
+            "max_messages": "",
+        })
         self.assertEqual(config["max_messages"], 10000)
 
     def test_dashboard_honors_explicit_date_and_message_limits(self):

@@ -1,7 +1,7 @@
 # GScrape
 
 <p align="center">
-  <img src="logo.jpg" alt="GScrape logo" width="720">
+  <img src="https://raw.githubusercontent.com/DTRHnet/GScrape/main/logo.jpg" alt="GScrape logo" width="720">
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 [![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f?style=flat-square)](#testing)
 [![Security](https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square)](#security-and-data-handling)
 
-**Version:** `0.7.0` · **Status:** bounded control-plane foundation · **Deployment:** self-hosted
+**Version:** `1.0.0` · **Status:** major release · **Deployment:** self-hosted
 
 The local control plane exposes non-secret account health at `/api/core/health`,
 operational counters at `/api/core/metrics`, and configurable generated-result

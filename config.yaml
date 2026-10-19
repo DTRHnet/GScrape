@@ -7,7 +7,7 @@ category_regex: ""
 attachment_extensions: ""
 attachment_filename_regex: ""
 attachment_discovery: false
-acquire_attachments: false
+acquire_attachments: true
 attachment_output_dir: acquired-attachments
 after: ""
 before: ""

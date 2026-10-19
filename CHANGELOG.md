@@ -2,6 +2,20 @@
 
 All notable changes are documented here. Versions follow semantic versioning.
 
+## [1.0.0] - 2026-10-19
+
+### Added
+
+- Added operator stop, resume, and retry controls for dashboard discovery runs.
+- Added subprocess tracking and durable cancelled-run state handling.
+- Added dashboard diagnostics for the configured local HTTP endpoint.
+- Added SHA-256 attachment deduplication and completed-run thumbnail support.
+
+### Fixed
+
+- Fixed the debug health check to report the dashboard's actual configured host and port.
+- Fixed the README logo reference to load from GitHub's raw content URL.
+
 ## [0.7.0] - 2026-10-18
 
 ### Added

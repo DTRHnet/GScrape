@@ -23,6 +23,18 @@ class AttachmentAcquisitionTests(unittest.TestCase):
             self.assertEqual(public["acquired_attachments"][0]["stored_name"], "m1_note.txt")
             self.assertNotIn("data", public["acquired_attachments"][0])
 
+    def test_acquisition_reuses_same_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            response = {"data": base64.urlsafe_b64encode(b"same-image").decode()}
+            with patch.object(gscrape, "request_json", return_value=response) as request:
+                first = gscrape.acquire_attachment_bytes("m1", {"filename": "one.png", "attachment_id": "a1"}, "https://example.test", None, "token", output, 0, gscrape.AdaptiveRateLimiter(0, 1))
+                second = gscrape.acquire_attachment_bytes("m2", {"filename": "two.png", "attachment_id": "a2"}, "https://example.test", None, "token", output, 0, gscrape.AdaptiveRateLimiter(0, 1))
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(first["stored_name"], second["stored_name"])
+            self.assertEqual(second["status"], "deduplicated")
+            self.assertEqual(len(list(output.glob("*.png"))), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

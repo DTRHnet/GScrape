@@ -413,11 +413,15 @@ textarea { min-height: 100px; resize: vertical; }
 .debug-check { display: flex; align-items: flex-start; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; }
 .debug-summary { display: flex; align-items: center; justify-content: space-between; }
 .attachment-gallery { display: grid; gap: 10px; min-width: 220px; }
-.attachment-card { display: grid; grid-template-columns: 72px 1fr; gap: 10px; align-items: start; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,0.02); }
+.attachment-card { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,0.02); }
 .attachment-thumb { display: block; width: 72px; height: 72px; overflow: hidden; border-radius: 8px; border: 1px solid var(--line); background: #0d0d0d; }
-.attachment-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attachment-thumb:hover, .attachment-thumb:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent); }
+.attachment-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .18s ease; }
+.attachment-thumb:hover img, .attachment-thumb:focus-visible img { transform: scale(1.06); }
 .attachment-thumb.placeholder { display: grid; place-items: center; color: var(--muted); font-weight: 700; }
 .attachment-names { max-width: 240px; word-break: break-word; }
+.attachment-info { min-width: 0; }
+.attachment-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acquire-option { margin-top: 10px; }
 
 @media (max-width: 1050px) {

@@ -94,10 +94,15 @@ class GmailProvider:
         if set(categories) - self.allowed_categories:
             raise ValueError("unsupported Gmail category")
         raw_max = config.get("max_messages", None)
+        if isinstance(raw_max, str):
+            raw_max = raw_max.strip()
         if raw_max in (None, "", 0, "0"):
             max_messages = 10000
         else:
-            max_messages = int(raw_max)
+            try:
+                max_messages = int(raw_max)
+            except (TypeError, ValueError) as error:
+                raise ValueError("max_messages must be between 1 and 10000") from error
         if not 1 <= max_messages <= 10000:
             raise ValueError("max_messages must be between 1 and 10000")
         query = str(config.get("query", "")).strip()

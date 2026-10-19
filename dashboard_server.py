@@ -182,6 +182,7 @@ def debug_snapshot():
         checks.append({"name": "database", "ok": True, "detail": DB_PATH.name})
     except Exception as error:
         checks.append({"name": "database", "ok": False, "detail": str(error)})
+    checks.append({"name": "dashboard_http", "ok": True, "detail": f"http://{HOST}:{PORT} (current service)"})
     checks.append({"name": "scanner", "ok": SCANNER.is_file(), "detail": SCANNER.name})
     checks.append({"name": "python", "ok": PYTHON.exists(), "detail": str(PYTHON if PYTHON.exists() else sys.executable)})
     checks.append({"name": "logs_directory", "ok": LOG_DIR.is_dir() and os.access(LOG_DIR, os.W_OK), "detail": str(LOG_DIR)})
@@ -245,6 +246,8 @@ def db():
         connection.execute("ALTER TABLE runs ADD COLUMN results_dir TEXT")
     if "listed" not in columns:
         connection.execute("ALTER TABLE runs ADD COLUMN listed INTEGER DEFAULT 0")
+    if "pid" not in columns:
+        connection.execute("ALTER TABLE runs ADD COLUMN pid INTEGER")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS run_sequence (
              id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -749,21 +752,34 @@ def validate_config(data):
             re.compile(attachment_filename_regex, re.I)
         except re.error as error:
             raise ValueError(f"invalid attachment filename regex: {error}") from error
-    acquire_attachments = bool(data.get("acquire_attachments", False))
+    acquire_attachments = bool(data.get("acquire_attachments", attachment_discovery))
     if acquire_attachments and not attachment_discovery:
         raise ValueError("attachment acquisition requires attachment discovery")
+    # Blank / missing max_messages means "no practical limit" (ceiling), not int("").
     raw_max_messages = data.get("max_messages", None)
+    if isinstance(raw_max_messages, str):
+        raw_max_messages = raw_max_messages.strip()
     if raw_max_messages in (None, "", 0, "0"):
-        # No explicit cap → use the configured ceiling instead of a silent low limit.
         max_messages = 10_000
     else:
-        max_messages = int(raw_max_messages)
+        try:
+            max_messages = int(raw_max_messages)
+        except (TypeError, ValueError) as error:
+            raise ValueError("max_messages must be an integer between 1 and 10000") from error
     if not 1 <= max_messages <= 10_000:
         raise ValueError("max_messages must be between 1 and 10000")
-    requests_per_second = float(data.get("requests_per_second", 1.0))
+    try:
+        raw_rps = data.get("requests_per_second", 1.0)
+        requests_per_second = 1.0 if raw_rps in (None, "") else float(raw_rps)
+    except (TypeError, ValueError) as error:
+        raise ValueError("requests_per_second must be between 0 and 10") from error
     if not 0 <= requests_per_second <= 10:
         raise ValueError("requests_per_second must be between 0 and 10")
-    rate_limit_max_delay = float(data.get("rate_limit_max_delay", 60.0))
+    try:
+        raw_cooldown = data.get("rate_limit_max_delay", 60.0)
+        rate_limit_max_delay = 60.0 if raw_cooldown in (None, "") else float(raw_cooldown)
+    except (TypeError, ValueError) as error:
+        raise ValueError("rate_limit_max_delay must be between 1 and 300") from error
     if not 1 <= rate_limit_max_delay <= 300:
         raise ValueError("rate_limit_max_delay must be between 1 and 300")
     # Date bounds apply only when the operator sets them. Empty fields mean
@@ -1107,6 +1123,8 @@ def run_scan(run_id, config):
                 stderr=subprocess.STDOUT,
                 env=scanner_env(),
             )
+            connection.execute("UPDATE runs SET pid=? WHERE id=?", (process.pid, run_id))
+            connection.commit()
             # The scanner emits one redacted progress line per Gmail page.
             # Stream it into the log and database so the UI reflects work
             # while the child process is still running.
@@ -1142,7 +1160,8 @@ def run_scan(run_id, config):
         current = connection.execute(
             "SELECT pages, scanned, listed, matches FROM runs WHERE id=?", (run_id,)
         ).fetchone()
-        status = "completed" if result_code == 0 else "failed"
+        current_status = connection.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+        status = "cancelled" if current_status == "cancelled" else ("completed" if result_code == 0 else "failed")
         scanner_error = next(
             (
                 line.strip() for line in reversed(scan_output.splitlines())
@@ -1167,7 +1186,7 @@ def run_scan(run_id, config):
         LOGGER.exception("scan failed: %s", run_id)
         connection.execute(
             "UPDATE runs SET status=?, finished_at=?, error=? WHERE id=?",
-            ("failed", now(), str(error)[:1000], run_id),
+            ("cancelled" if connection.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()[0] == "cancelled" else "failed", now(), str(error)[:1000], run_id),
         )
     connection.commit()
     row = connection.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -1964,6 +1983,57 @@ class Handler(BaseHTTPRequestHandler):
                 connection.commit()
                 connection.close()
                 return json_response(self, {"deleted": cursor.rowcount == 1})
+            if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/stop"):
+                run_id = parsed.path.split("/")[3]
+                connection = db()
+                row = connection.execute("SELECT status, pid FROM runs WHERE id=?", (run_id,)).fetchone()
+                if not row:
+                    connection.close()
+                    return json_response(self, {"error": "run not found"}, 404)
+                if row["status"] not in {"queued", "running"}:
+                    connection.close()
+                    return json_response(self, {"error": "only queued or running runs can be stopped"}, 409)
+                connection.execute("UPDATE runs SET status=?, finished_at=?, error=? WHERE id=?", ("cancelled", now(), "stopped by operator", run_id))
+                connection.commit()
+                connection.close()
+                if row["pid"]:
+                    try:
+                        os.kill(int(row["pid"]), 15)
+                    except (OSError, ValueError):
+                        pass
+                return json_response(self, {"id": run_id, "status": "cancelled"})
+            if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/retry"):
+                run_id = parsed.path.split("/")[3]
+                connection = db()
+                row = connection.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+                if not row:
+                    connection.close()
+                    return json_response(self, {"error": "run not found"}, 404)
+                if row["status"] not in {"failed", "cancelled"}:
+                    connection.close()
+                    return json_response(self, {"error": "only failed or stopped runs can be retried"}, 409)
+                config = json.loads(row["request_json"] or "{}")
+                connection.execute("UPDATE runs SET status=?, started_at=?, finished_at=NULL, error=NULL, pid=NULL WHERE id=?", ("queued", now(), run_id))
+                connection.commit()
+                connection.close()
+                threading.Thread(target=run_scan, args=(run_id, config), daemon=True).start()
+                return json_response(self, {"id": run_id, "status": "queued"})
+            if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/resume"):
+                run_id = parsed.path.split("/")[3]
+                connection = db()
+                row = connection.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+                if not row:
+                    connection.close()
+                    return json_response(self, {"error": "run not found"}, 404)
+                if row["status"] != "cancelled":
+                    connection.close()
+                    return json_response(self, {"error": "only stopped runs can be resumed"}, 409)
+                config = json.loads(row["request_json"] or "{}")
+                connection.execute("UPDATE runs SET status=?, started_at=?, finished_at=NULL, error=NULL, pid=NULL WHERE id=?", ("queued", now(), run_id))
+                connection.commit()
+                connection.close()
+                threading.Thread(target=run_scan, args=(run_id, config), daemon=True).start()
+                return json_response(self, {"id": run_id, "status": "queued"})
             self.send_error(404)
         except ValueError as error:
             json_response(self, {"error": str(error)}, 400)
