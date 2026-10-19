@@ -78,6 +78,26 @@ class Database:
             self._migration_two()
             self.connection.execute("UPDATE schema_version SET version = 2")
             self.connection.commit()
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(oauth_sessions)")}
+        if "pkce_verifier_hash" not in columns:
+            self.connection.execute("ALTER TABLE oauth_sessions ADD COLUMN pkce_verifier_hash TEXT")
+            self.connection.commit()
+        if "pkce_verifier_ref" not in columns:
+            self.connection.execute("ALTER TABLE oauth_sessions ADD COLUMN pkce_verifier_ref TEXT")
+            self.connection.commit()
+        # Existing installs created credentials.account_id without UNIQUE, but
+        # upsert_credential relies on ON CONFLICT(account_id). Keep one row per
+        # account before enforcing uniqueness so Connect can succeed.
+        self.connection.execute(
+            """DELETE FROM credentials
+               WHERE rowid NOT IN (
+                   SELECT MAX(rowid) FROM credentials GROUP BY account_id
+               )"""
+        )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_account_id ON credentials(account_id)"
+        )
+        self.connection.commit()
 
     def _migration_two(self) -> None:
         self.connection.executescript("""
@@ -133,7 +153,7 @@ class Database:
             );
             CREATE TABLE IF NOT EXISTS credentials (
                 id TEXT PRIMARY KEY,
-                account_id TEXT NOT NULL,
+                account_id TEXT NOT NULL UNIQUE,
                 secret_ref TEXT NOT NULL UNIQUE,
                 scopes_json TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -153,6 +173,7 @@ class Database:
                 expires_at TEXT NOT NULL,
                 completed_at TEXT,
                 error_code TEXT,
+                pkce_verifier_hash TEXT,
                 FOREIGN KEY(provider_id) REFERENCES providers(id)
             );
             CREATE TABLE IF NOT EXISTS jobs_v2 (
@@ -184,6 +205,61 @@ class Database:
         )
         self.connection.commit()
 
+    def upsert_account(self, account_id: str, provider_id: str, email: str, label: str,
+                       status: str = "needs_authorization") -> str:
+        """Create or update a non-secret provider account record."""
+        if not account_id or not email or not label:
+            raise ValueError("account id, email, and label are required")
+        if status not in {"pending", "connected", "authorizing", "needs_authorization", "error", "disabled"}:
+            raise ValueError("unsupported account status")
+        with self.transaction() as connection:
+            connection.execute(
+                """INSERT INTO accounts_v2(id, provider_id, email, label, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET provider_id=excluded.provider_id,
+                   email=excluded.email, label=excluded.label, status=excluded.status""",
+                (account_id, provider_id, email.strip(), label.strip(), status, utc_now()),
+            )
+        return account_id
+
+    def list_accounts(self):
+        """Return account metadata only; credentials and session material are excluded."""
+        return self.connection.execute(
+            "SELECT id, provider_id, email, label, status, last_verified_at, created_at "
+            "FROM accounts_v2 ORDER BY created_at DESC"
+        ).fetchall()
+
+    def upsert_credential(self, account_id: str, secret_ref: str, scopes: list[str]) -> None:
+        self.connection.execute(
+            """INSERT INTO credentials(id, account_id, secret_ref, scopes_json, status, created_at)
+               VALUES (?, ?, ?, ?, 'active', ?)
+               ON CONFLICT(account_id) DO UPDATE SET secret_ref=excluded.secret_ref,
+               scopes_json=excluded.scopes_json, status='active', revoked_at=NULL""",
+            (uuid.uuid4().hex, account_id, secret_ref, json.dumps(scopes), utc_now()),
+        )
+        self.connection.commit()
+
+    def credential_for_account(self, account_id: str) -> Optional[sqlite3.Row]:
+        return self.connection.execute(
+            "SELECT * FROM credentials WHERE account_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+            (account_id,),
+        ).fetchone()
+
+    def update_account_health(self, account_id: str, status: str) -> None:
+        with self.transaction() as connection:
+            connection.execute("UPDATE accounts_v2 SET status=?, last_verified_at=? WHERE id=?", (status, utc_now() if status == "connected" else None, account_id))
+
+    def mark_oauth_session(self, session_id: str, status: str, error_code: Optional[str] = None) -> bool:
+        """Update OAuth control-plane state without storing authorization values."""
+        if status not in {"pending", "consumed", "completed", "failed", "expired"}:
+            raise ValueError("unsupported OAuth session status")
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE oauth_sessions SET status=?, completed_at=?, error_code=? WHERE id=?",
+                (status, utc_now() if status != "pending" else None, error_code, session_id),
+            )
+            return cursor.rowcount == 1
+
     def create_oauth_session(
         self,
         provider_id: str,
@@ -191,31 +267,34 @@ class Database:
         redirect_uri: str,
         expires_at: str,
         account_hint: Optional[str] = None,
+        pkce_verifier_hash: Optional[str] = None,
+        pkce_verifier_ref: Optional[str] = None,
     ) -> str:
         session_id = uuid.uuid4().hex
         self.connection.execute(
             """INSERT INTO oauth_sessions
                (id, provider_id, account_hint, state_hash, redirect_uri, status,
-                created_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
-            (session_id, provider_id, account_hint, state_hash, redirect_uri, utc_now(), expires_at),
+                created_at, expires_at, pkce_verifier_hash, pkce_verifier_ref)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+            (session_id, provider_id, account_hint, state_hash, redirect_uri, utc_now(), expires_at, pkce_verifier_hash, pkce_verifier_ref),
         )
         self.connection.commit()
         return session_id
 
     def consume_oauth_state(self, state_hash: str) -> Optional[sqlite3.Row]:
-        """Atomically claim a pending, non-expired OAuth state."""
+        """Atomically claim a pending, non-expired OAuth state for one callback."""
+        now = utc_now()
         with self.transaction() as connection:
             row = connection.execute(
                 """SELECT * FROM oauth_sessions
                    WHERE state_hash = ? AND status = 'pending' AND expires_at > ?""",
-                (state_hash, utc_now()),
+                (state_hash, now),
             ).fetchone()
             if row is None:
                 return None
             connection.execute(
-                "UPDATE oauth_sessions SET status = 'consumed' WHERE id = ? AND status = 'pending'",
-                (row["id"],),
+                "UPDATE oauth_sessions SET status='consumed', completed_at=? WHERE id=? AND status='pending'",
+                (now, row["id"]),
             )
             return row
 

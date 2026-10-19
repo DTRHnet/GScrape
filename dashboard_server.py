@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import base64
 import io
 import json
 import logging
 from logging.handlers import RotatingFileHandler
+import mimetypes
 import os
 import re
 import selectors
@@ -22,12 +25,15 @@ from datetime import datetime, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlencode
+import urllib.request
+import urllib.error
 
 import gscrape
 from core.storage import Database
 from core.async_jobs import AsyncJobRunner
 from core.providers import DemoProvider, GmailProvider
+from core.secrets import LocalFileSecretStore, SecretRef
 
 
 ROOT = Path(__file__).resolve().parent
@@ -37,16 +43,19 @@ LOG_PATH = ROOT / "email-wallet-search.log"
 SCANNER = ROOT / "gscrape.py"
 PYTHON = ROOT / ".venv" / "bin" / "python"
 SESSION_DIR = ROOT / "sessions"
+SECRET_DIR = ROOT / "credentials"
+SECRET_STORE = LocalFileSecretStore(SECRET_DIR)
 HOST = "127.0.0.1"
 PORT = 8766
 MAX_QUERY = 2000
 LOG_DIR = ROOT / "logs"
 LOG_CONFIG_PATH = LOG_DIR / "logging.json"
 RESULTS_DIR = ROOT / "results"
+ACQUIRED_DIR = ROOT / "acquired-attachments"
 DEFAULT_AFTER_DATE = "2013/01/01"
 DEFAULT_BEFORE_DATE = "2018/12/31"
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff", ".bmp"}
 DEFAULT_LOG_CONFIG = {"level": "INFO", "max_bytes": 5 * 1024 * 1024, "backup_count": 5}
-RETENTION_DAYS = int(os.environ.get("GSCRAPE_RETENTION_DAYS", "30"))
 METRICS = {"jobs_created": 0, "jobs_completed": 0, "jobs_failed": 0, "jobs_cancelled": 0}
 LOGGER = logging.getLogger("gscrape.dashboard")
 ACTIVE_LOG_HANDLER = None
@@ -54,6 +63,41 @@ CORE_JOB_RUNNER = AsyncJobRunner(str(DB_PATH))
 DEMO_PROVIDER = DemoProvider()
 GMAIL_PROVIDER = GmailProvider(SCANNER, ROOT, str(PYTHON if PYTHON.exists() else sys.executable), SESSION_DIR)
 CORE_PROVIDERS = {DEMO_PROVIDER.provider_id: DEMO_PROVIDER, GMAIL_PROVIDER.provider_id: GMAIL_PROVIDER}
+
+
+def load_dotenv_file(path=ROOT / ".env"):
+    """Load local .env into process env.
+
+    OAuth config keys from the project .env override a stale shell environment so
+    Connect always uses the same redirect URI as gmail_authorization_url.
+    Other keys are applied only when unset.
+    """
+    if not path.exists():
+        return
+    oauth_keys = {
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+    }
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key:
+            continue
+        if key in oauth_keys or key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv_file()
+RETENTION_DAYS = int(os.environ.get("GSCRAPE_RETENTION_DAYS", "30"))
+OAUTH_REDIRECT_URI = os.environ.get(
+    "GOOGLE_REDIRECT_URI",
+    f"http://{HOST}:{PORT}/api/core/oauth/callback",
+).strip() or f"http://{HOST}:{PORT}/api/core/oauth/callback"
 
 
 def configure_logging(level=None, max_bytes=None, backup_count=None):
@@ -258,6 +302,228 @@ def account_health_snapshot():
     return [{key: row[key] for key in ("id", "provider_id", "email", "label", "status", "last_verified_at")} for row in rows]
 
 
+def core_account_snapshot():
+    """Return shared control-plane accounts with no credential or token fields."""
+    with Database(DB_PATH) as database:
+        database.ensure_provider("gmail", "Gmail")
+        return [dict(row) for row in database.list_accounts()]
+
+
+def core_account_id(value):
+    """Validate dashboard account identifiers before using them in storage paths."""
+    value = str(value or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value):
+        raise ValueError("invalid account id")
+    return value
+
+
+def inspect_legacy_session(path):
+    """Inspect a legacy dotenv session without reading or returning secret values."""
+    session_path = Path(path).expanduser().resolve()
+    try:
+        session_path.relative_to(SESSION_DIR.resolve())
+    except ValueError:
+        return {"present": False, "reason": "outside_session_directory"}
+    if not session_path.is_file():
+        return {"present": False, "reason": "missing"}
+    names = set()
+    try:
+        for line in session_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                names.add(stripped.split("=", 1)[0].strip())
+    except OSError:
+        return {"present": False, "reason": "unreadable"}
+    return {
+        "present": True,
+        "has_refresh_token": "GMAIL_REFRESH_TOKEN" in names,
+        "has_access_token": "GMAIL_ACCESS_TOKEN" in names,
+        "variables": sorted(name for name in names if name in {"GMAIL_REFRESH_TOKEN", "GMAIL_ACCESS_TOKEN"}),
+    }
+
+
+def gmail_authorization_url(session_id, state, email, code_challenge=None):
+    """Build a redirection URL containing OAuth state but never credentials."""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    redirect_uri = OAUTH_REDIRECT_URI
+    if not client_id:
+        raise RuntimeError("GOOGLE_CLIENT_ID is required before connecting a Gmail account")
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/gmail.readonly",
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
+    }
+    if email:
+        params["login_hint"] = email
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+
+
+class OAuthExchangeError(RuntimeError):
+    """Non-secret OAuth exchange failure with a stable machine code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def classify_oauth_http_error(error: urllib.error.HTTPError) -> OAuthExchangeError:
+    """Map Google token-endpoint failures to operator-safe codes/messages."""
+    detail = gscrape.oauth_error_detail(error)
+    body = detail.lower()
+    if "redirect_uri_mismatch" in body:
+        return OAuthExchangeError(
+            "redirect_uri_mismatch",
+            f"OAuth redirect URI mismatch. Dashboard expects {OAUTH_REDIRECT_URI}.",
+        )
+    if "invalid_grant" in body:
+        return OAuthExchangeError(
+            "invalid_grant",
+            "Authorization code was invalid, expired, or already used. Start Connect again.",
+        )
+    if "invalid_client" in body:
+        return OAuthExchangeError(
+            "invalid_client",
+            "OAuth client ID/secret was rejected. Check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+        )
+    if "unauthorized_client" in body:
+        return OAuthExchangeError(
+            "unauthorized_client",
+            "OAuth client is not allowed for this grant. Check the Google Cloud OAuth client type.",
+        )
+    if "invalid_request" in body and "code_verifier" in body:
+        return OAuthExchangeError(
+            "pkce_failed",
+            "OAuth PKCE verification failed. Start Connect again from Settings.",
+        )
+    return OAuthExchangeError("token_exchange_failed", f"Google OAuth code exchange failed{detail}")
+
+
+def exchange_gmail_code(code, client_id, client_secret, redirect_uri, code_verifier):
+    if not code:
+        raise OAuthExchangeError("missing_code", "Google did not return an authorization code.")
+    if not client_id or not client_secret:
+        raise OAuthExchangeError(
+            "missing_client",
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required for token exchange.",
+        )
+    if not redirect_uri:
+        raise OAuthExchangeError("missing_redirect", "OAuth redirect URI is not configured.")
+    if not code_verifier:
+        raise OAuthExchangeError("pkce_failed", "OAuth PKCE verifier was missing for this Connect attempt.")
+    payload = urlencode({
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+        "code_verifier": code_verifier,
+    }).encode("ascii")
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            tokens = json.load(response)
+    except urllib.error.HTTPError as error:
+        raise classify_oauth_http_error(error) from error
+    except urllib.error.URLError as error:
+        raise OAuthExchangeError(
+            "network_error",
+            "Could not reach Google token endpoint. Check local network connectivity.",
+        ) from error
+    except ValueError as error:
+        raise OAuthExchangeError(
+            "invalid_token_response",
+            "Google token endpoint returned an unreadable response.",
+        ) from error
+    if not isinstance(tokens, dict):
+        raise OAuthExchangeError("invalid_token_response", "Google token endpoint returned an invalid payload.")
+    if not tokens.get("access_token"):
+        raise OAuthExchangeError("missing_access_token", "Google OAuth response did not contain an access token.")
+    if not tokens.get("refresh_token"):
+        raise OAuthExchangeError(
+            "missing_refresh_token",
+            "Google did not return a refresh token. Revoke GScrape access at "
+            "https://myaccount.google.com/permissions then Connect again with consent.",
+        )
+    return tokens
+
+
+def write_session_env(path: Path, tokens: dict, email: str = "") -> None:
+    """Persist non-ambient OAuth values into a scanner session env file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    values = {
+        "GOOGLE_CLIENT_ID": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
+        "GOOGLE_CLIENT_SECRET": os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(),
+        "GOOGLE_REDIRECT_URI": OAUTH_REDIRECT_URI,
+        "GMAIL_REFRESH_TOKEN": str(tokens.get("refresh_token") or ""),
+    }
+    if tokens.get("access_token"):
+        values["GMAIL_ACCESS_TOKEN"] = str(tokens["access_token"])
+    if email:
+        values["GMAIL_ACCOUNT_EMAIL"] = email
+    lines = [f'{key}="{value}"' for key, value in values.items() if value]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def persist_oauth_tokens(account_v2_id: str, email: str, tokens: dict) -> list[str]:
+    """Store tokens in the secret store and sync every matching scanner session file."""
+    synced = []
+    ref = SECRET_STORE.put_json({
+        "refresh_token": tokens.get("refresh_token"),
+        "access_token": tokens.get("access_token"),
+        "scope": tokens.get("scope", ""),
+        "token_type": tokens.get("token_type", ""),
+        "expires_in": tokens.get("expires_in"),
+    })
+    with Database(DB_PATH) as database:
+        database.upsert_credential(account_v2_id, ref.id, str(tokens.get("scope") or "").split())
+        database.update_account_health(account_v2_id, "connected")
+    core_session = SESSION_DIR / f"{account_v2_id}.env"
+    write_session_env(core_session, tokens, email)
+    synced.append(str(core_session))
+    connection = db()
+    legacy_rows = connection.execute(
+        "SELECT id, session_file FROM accounts WHERE lower(email)=lower(?)",
+        (email,),
+    ).fetchall()
+    for row in legacy_rows:
+        session_path = Path(row["session_file"])
+        # Keep scanner sessions inside this workspace even if a row has a stale path.
+        if SESSION_DIR.resolve() not in session_path.resolve().parents:
+            session_path = SESSION_DIR / f"{row['id']}.env"
+            connection.execute(
+                "UPDATE accounts SET session_file=?, status=?, last_used_at=? WHERE id=?",
+                (str(session_path), "connected", now(), row["id"]),
+            )
+        else:
+            connection.execute(
+                "UPDATE accounts SET status=?, last_used_at=? WHERE id=?",
+                ("connected", now(), row["id"]),
+            )
+        write_session_env(session_path, tokens, email)
+        synced.append(str(session_path))
+    connection.commit()
+    connection.close()
+    return synced
+
+
 def allocate_run_id(connection):
     """Atomically allocate a human-friendly, never-reused six-digit run ID."""
     connection.execute("BEGIN IMMEDIATE")
@@ -361,6 +627,44 @@ def json_response(handler, payload, status=200):
     handler.wfile.write(raw)
 
 
+def html_response(handler, body, status=200):
+    raw = body.encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(raw)))
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
+def oauth_result_page(*, ok, title, message, account_id="", error_code=""):
+    """Browser-facing OAuth result that returns control to the dashboard."""
+    params = {"view": "settings", "oauth": "connected" if ok else "failed"}
+    if account_id:
+        params["account_id"] = account_id
+    if not ok and error_code:
+        params["oauth_error"] = error_code
+    if not ok and message:
+        # Keep operator-safe guidance in the hash so the UI can show it without
+        # stuffing long text into a logged query string.
+        params["oauth_message"] = message[:240]
+    destination = "/?" + urlencode(params)
+    status_class = "ok" if ok else "err"
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>{escape(title)}</title>
+<meta http-equiv="refresh" content="1;url={destination}">
+<style>
+body{{font-family:system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;min-height:100vh;margin:0}}
+main{{max-width:28rem;padding:1.5rem;border:1px solid #333;border-radius:12px;background:#1a1a1a}}
+.{status_class}{{color:{"#8f8" if ok else "#f88"}}}
+a{{color:#9cf}}
+</style></head><body><main>
+<h1 class="{status_class}">{escape(title)}</h1>
+<p>{escape(message)}</p>
+<p><a href="{destination}">Return to GScrape settings</a></p>
+<script>setTimeout(function(){{ location.replace({json.dumps(destination)}); }}, 600);</script>
+</main></body></html>"""
+
+
 def read_json(handler):
     try:
         length = min(int(handler.headers.get("Content-Length", "0")), 100_000)
@@ -445,7 +749,15 @@ def validate_config(data):
             re.compile(attachment_filename_regex, re.I)
         except re.error as error:
             raise ValueError(f"invalid attachment filename regex: {error}") from error
-    max_messages = int(data.get("max_messages", 1000))
+    acquire_attachments = bool(data.get("acquire_attachments", False))
+    if acquire_attachments and not attachment_discovery:
+        raise ValueError("attachment acquisition requires attachment discovery")
+    raw_max_messages = data.get("max_messages", None)
+    if raw_max_messages in (None, "", 0, "0"):
+        # No explicit cap → use the configured ceiling instead of a silent low limit.
+        max_messages = 10_000
+    else:
+        max_messages = int(raw_max_messages)
     if not 1 <= max_messages <= 10_000:
         raise ValueError("max_messages must be between 1 and 10000")
     requests_per_second = float(data.get("requests_per_second", 1.0))
@@ -454,10 +766,10 @@ def validate_config(data):
     rate_limit_max_delay = float(data.get("rate_limit_max_delay", 60.0))
     if not 1 <= rate_limit_max_delay <= 300:
         raise ValueError("rate_limit_max_delay must be between 1 and 300")
-    # Discovery is historical by default; callers may explicitly override the
-    # window for a separately authorized search.
-    after_date = str(data.get("after_date") or DEFAULT_AFTER_DATE).strip()
-    before_date = str(data.get("before_date") or DEFAULT_BEFORE_DATE).strip()
+    # Date bounds apply only when the operator sets them. Empty fields mean
+    # unrestricted search — do not silently inject the historical window.
+    after_date = str(data.get("after_date") or "").strip()
+    before_date = str(data.get("before_date") or "").strip()
     if after_date:
         gscrape.normalize_gmail_date(after_date)
     if before_date:
@@ -474,6 +786,7 @@ def validate_config(data):
         "contact_email_regex": contact_email_regex,
         "contact_email_domain": contact_email_domain,
         "attachment_discovery": attachment_discovery,
+        "acquire_attachments": acquire_attachments,
         "domains": domains or gscrape.domains_for_categories(categories, attachment_discovery),
         "after_date": after_date,
         "before_date": before_date,
@@ -490,9 +803,35 @@ def account_initials(name):
     return "".join(part[0] for part in parts[:2]).upper()
 
 
+def scanner_env():
+    """Child env for gscrape that cannot inherit ambient mailbox tokens."""
+    env = os.environ.copy()
+    for key in (
+        "GMAIL_REFRESH_TOKEN",
+        "GMAIL_ACCESS_TOKEN",
+        "GMAIL_ACCOUNT_EMAIL",
+        "GMAIL_USER",
+    ):
+        env.pop(key, None)
+    return env
+
+
 def account_is_connected(row):
     session = Path(row["session_file"])
-    return session.exists() and "GMAIL_REFRESH_TOKEN" in session.read_text(errors="ignore")
+    if not session.exists() or "GMAIL_REFRESH_TOKEN" not in session.read_text(errors="ignore"):
+        return False
+    try:
+        result = subprocess.run(
+            [str(PYTHON if PYTHON.exists() else sys.executable), str(SCANNER),
+             "--profile-check", "--env-file", str(session)],
+            cwd=ROOT, text=True, capture_output=True, timeout=120, env=scanner_env(),
+        )
+        if result.returncode:
+            return False
+        profile = json.loads(result.stdout)
+        return str(profile.get("emailAddress", "")).strip().casefold() == str(row["email"] or "").strip().casefold()
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError, json.JSONDecodeError):
+        return False
 
 
 def list_rows(table, limit=100):
@@ -540,6 +879,43 @@ def load_run_records(run_id):
         key = record.get("message_location") or json.dumps(record, sort_keys=True)
         merged[key] = record
     return list(merged.values())
+
+
+def acquired_run_dir(run_id: str) -> Path:
+    return ACQUIRED_DIR / run_id
+
+
+def resolve_acquired_attachment(run_id: str, stored_name: str) -> Path | None:
+    """Resolve a stored attachment path under the run's acquire directory only."""
+    name = Path(unquote(stored_name or "")).name
+    if not name or name in {".", ".."} or "/" in stored_name or "\\" in stored_name:
+        return None
+    path = (acquired_run_dir(run_id) / name).resolve()
+    root = acquired_run_dir(run_id).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path if path.is_file() else None
+
+
+def enrich_match_for_dashboard(run_id: str, record: dict) -> dict:
+    """Attach download/thumbnail URLs for acquired files without exposing bytes."""
+    payload = gscrape.public_match_record(record)
+    acquired = []
+    for item in payload.get("acquired_attachments") or []:
+        stored = str(item.get("stored_name") or "")
+        entry = dict(item)
+        if stored and resolve_acquired_attachment(run_id, stored):
+            entry["download_url"] = f"/api/runs/{run_id}/attachments/{stored}"
+            suffix = Path(stored).suffix.lower()
+            if suffix in IMAGE_SUFFIXES or Path(str(item.get("filename") or "")).suffix.lower() in IMAGE_SUFFIXES:
+                entry["thumbnail_url"] = f"/api/runs/{run_id}/attachments/{stored}?inline=1"
+                entry["is_image"] = True
+        acquired.append(entry)
+    if acquired:
+        payload["acquired_attachments"] = acquired
+    return payload
 
 
 def load_all_run_records():
@@ -618,6 +994,23 @@ def reconcile_scan_counter(payload, current, key):
     return max(reported, observed)
 
 
+def recover_interrupted_runs(message: str = "scan interrupted by dashboard restart") -> int:
+    """Mark queued/running rows failed after a process restart (daemon threads die)."""
+    connection = db()
+    cursor = connection.execute(
+        """UPDATE runs
+           SET status='failed', finished_at=?, error=?
+           WHERE status IN ('queued', 'running')""",
+        (now(), message[:1000]),
+    )
+    connection.commit()
+    count = cursor.rowcount
+    connection.close()
+    if count:
+        LOGGER.warning("recovered %d interrupted run(s)", count)
+    return count
+
+
 def run_scan(run_id, config):
     LOGGER.info("scan started: %s", run_id)
     connection = db()
@@ -637,6 +1030,10 @@ def run_scan(run_id, config):
     ]
     if config.get("attachment_discovery"):
         args.append("--attachment-discovery")
+    if config.get("acquire_attachments"):
+        acquire_dir = ROOT / "acquired-attachments" / run_id
+        acquire_dir.mkdir(parents=True, exist_ok=True)
+        args.extend(["--acquire-attachments", "--attachment-output-dir", str(acquire_dir)])
     for domain in config.get("domains", []):
         args.extend(["--domain", domain])
     if config.get("attachment_extensions"):
@@ -659,7 +1056,7 @@ def run_scan(run_id, config):
             profile_result = subprocess.run(
                 [str(PYTHON if PYTHON.exists() else sys.executable), str(SCANNER),
                  "--profile-check", "--env-file", account["session_file"]],
-                cwd=ROOT, text=True, capture_output=True, timeout=120,
+                cwd=ROOT, text=True, capture_output=True, timeout=120, env=scanner_env(),
             )
             if profile_result.returncode:
                 raise RuntimeError("Gmail session profile verification failed")
@@ -681,6 +1078,25 @@ def run_scan(run_id, config):
             scan_log.write(f"run_id={run_id}\n")
             scan_log.write(f"command_category={config['category']}\n")
             scan_log.write(f"selected_categories={','.join(config['categories'])}\n")
+            if config.get("attachment_discovery"):
+                scan_log.write(
+                    "attachment_discovery_query="
+                    f"{gscrape.attachment_discovery_query(config.get('attachment_extensions') or [])}\n"
+                )
+            # Redacted argv for audit: omit env-file path contents, keep flags.
+            safe_args = []
+            skip_next = False
+            for index, part in enumerate(args):
+                if skip_next:
+                    skip_next = False
+                    safe_args.append("<session>")
+                    continue
+                if part == "--env-file":
+                    safe_args.append(part)
+                    skip_next = True
+                    continue
+                safe_args.append(part)
+            scan_log.write("argv=" + " ".join(safe_args) + "\n")
             scan_log.flush()
             process = subprocess.Popen(
                 args,
@@ -689,6 +1105,7 @@ def run_scan(run_id, config):
                 bufsize=1,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=scanner_env(),
             )
             # The scanner emits one redacted progress line per Gmail page.
             # Stream it into the log and database so the UI reflects work
@@ -812,8 +1229,165 @@ class Handler(BaseHTTPRequestHandler):
                     accounts.append(item)
                 connection.close()
                 return json_response(self, {"accounts": accounts})
+            if parsed.path == "/api/core/accounts":
+                accounts = core_account_snapshot()
+                for account in accounts:
+                    account["legacy_session"] = inspect_legacy_session(SESSION_DIR / f"{account['id']}.env")
+                return json_response(self, {"accounts": accounts})
+            if parsed.path.startswith("/api/core/accounts/") and parsed.path.endswith("/connect"):
+                account_id = core_account_id(parsed.path.split("/")[4])
+                with Database(DB_PATH) as database:
+                    row = database.connection.execute("SELECT email FROM accounts_v2 WHERE id=?", (account_id,)).fetchone()
+                    if row is None:
+                        return json_response(self, {"error": "account not found"}, 404)
+                    raw_state = secrets.token_urlsafe(32)
+                    state_hash = hashlib.sha256(raw_state.encode("utf-8")).hexdigest()
+                    verifier = secrets.token_urlsafe(64)
+                    challenge = base64.urlsafe_b64encode(
+                        hashlib.sha256(verifier.encode("utf-8")).digest()
+                    ).rstrip(b"=").decode("ascii")
+                    verifier_ref = SECRET_STORE.put_json({"pkce_verifier": verifier})
+                    session_id = database.create_oauth_session(
+                        "gmail",
+                        state_hash,
+                        OAUTH_REDIRECT_URI,
+                        datetime.fromtimestamp(time.time() + 600, timezone.utc).isoformat(),
+                        row["email"],
+                        hashlib.sha256(verifier.encode("utf-8")).hexdigest(),
+                        verifier_ref.id,
+                    )
+                    database.update_account_health(account_id, "authorizing")
+                return json_response(self, {
+                    "session_id": session_id,
+                    "authorization_url": gmail_authorization_url(session_id, raw_state, row["email"], challenge),
+                    "status": "authorizing",
+                    "redirect_uri": OAUTH_REDIRECT_URI,
+                })
+            if parsed.path == "/api/core/oauth/callback":
+                query = parse_qs(parsed.query)
+                wants_html = "text/html" in (self.headers.get("Accept") or "")
+                state = query.get("state", [""])[0]
+                if query.get("error"):
+                    denied = str(query["error"][0])
+                    LOGGER.warning("oauth denied code=%s", denied)
+                    if wants_html:
+                        return html_response(
+                            self,
+                            oauth_result_page(
+                                ok=False,
+                                title="Authorization denied",
+                                message="Google did not grant access. Return to Settings and try Connect again.",
+                            ),
+                            400,
+                        )
+                    return json_response(self, {"error": "OAuth authorization denied", "code": denied}, 400)
+                row = None
+                with Database(DB_PATH) as database:
+                    row = database.consume_oauth_state(hashlib.sha256(state.encode()).hexdigest()) if state else None
+                    if row is None:
+                        if wants_html:
+                            return html_response(
+                                self,
+                                oauth_result_page(
+                                    ok=False,
+                                    title="Authorization expired",
+                                    message="This OAuth session is invalid or expired. Return to Settings and click Connect again.",
+                                ),
+                                400,
+                            )
+                        return json_response(self, {"error": "invalid or expired OAuth state"}, 400)
+                    ref_id = row["pkce_verifier_ref"]
+                try:
+                    if not ref_id:
+                        raise OAuthExchangeError("pkce_failed", "OAuth PKCE verifier was not stored for this Connect attempt.")
+                    verifier_payload = SECRET_STORE.get_json(SecretRef(ref_id, "local-file"))
+                    verifier = str(verifier_payload.get("pkce_verifier") or "")
+                    if not verifier or hashlib.sha256(verifier.encode()).hexdigest() != row["pkce_verifier_hash"]:
+                        raise OAuthExchangeError("pkce_failed", "OAuth PKCE verifier validation failed.")
+                    # Prefer the redirect captured when Connect started so exchange
+                    # matches the authorization request even if process env drifted.
+                    redirect_uri = str(row["redirect_uri"] or OAUTH_REDIRECT_URI).strip()
+                    tokens = exchange_gmail_code(
+                        query.get("code", [""])[0],
+                        os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
+                        os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(),
+                        redirect_uri,
+                        verifier,
+                    )
+                    with Database(DB_PATH) as database:
+                        account = database.connection.execute(
+                            "SELECT id FROM accounts_v2 WHERE lower(email)=lower(?) AND provider_id=?",
+                            (row["account_hint"], "gmail"),
+                        ).fetchone()
+                        if account is None:
+                            raise OAuthExchangeError(
+                                "account_not_found",
+                                "OAuth completed, but the Gmail account record was not found in Settings.",
+                            )
+                        account_id = account["id"]
+                    persist_oauth_tokens(account_id, row["account_hint"], tokens)
+                    with Database(DB_PATH) as database:
+                        database.mark_oauth_session(row["id"], "completed")
+                    SECRET_STORE.delete(SecretRef(ref_id, "local-file"))
+                    LOGGER.info("oauth connected account=%s", row["account_hint"])
+                    if wants_html:
+                        return html_response(
+                            self,
+                            oauth_result_page(
+                                ok=True,
+                                title="Account connected",
+                                message="Authorization complete. Returning you to GScrape.",
+                                account_id=account_id,
+                            ),
+                        )
+                    return json_response(self, {"status": "connected", "account_id": account_id})
+                except Exception as error:
+                    if isinstance(error, OAuthExchangeError):
+                        error_code = error.code
+                        message = error.message
+                    else:
+                        error_code = "token_exchange_failed"
+                        message = "Google consent succeeded, but the local token exchange failed. Return to Settings and try Connect again."
+                    LOGGER.warning("oauth exchange failed code=%s", error_code)
+                    with Database(DB_PATH) as database:
+                        database.mark_oauth_session(row["id"], "failed", error_code)
+                    if wants_html:
+                        return html_response(
+                            self,
+                            oauth_result_page(
+                                ok=False,
+                                title="Token exchange failed",
+                                message=message,
+                                error_code=error_code,
+                            ),
+                            502,
+                        )
+                    return json_response(self, {"error": message, "code": error_code}, 502)
             if parsed.path.startswith("/api/runs/") and parsed.path != "/api/runs":
-                run_id = parsed.path.split("/")[3]
+                parts = [part for part in parsed.path.split("/") if part]
+                # /api/runs/<run_id>/attachments/<stored_name>
+                if len(parts) >= 5 and parts[0] == "api" and parts[1] == "runs" and parts[3] == "attachments":
+                    run_id = parts[2]
+                    stored_name = "/".join(parts[4:])
+                    path = resolve_acquired_attachment(run_id, stored_name)
+                    if path is None:
+                        return json_response(self, {"error": "attachment not found"}, 404)
+                    query = parse_qs(parsed.query)
+                    inline = query.get("inline", ["0"])[0] in {"1", "true", "yes"}
+                    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+                    raw = path.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(raw)))
+                    disposition = "inline" if inline else "attachment"
+                    self.send_header(
+                        "Content-Disposition",
+                        f'{disposition}; filename="{path.name}"',
+                    )
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                run_id = parts[2] if len(parts) >= 3 else ""
                 connection = db()
                 row = connection.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
                 connection.close()
@@ -827,7 +1401,7 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {
                     "run": dict(row),
                     "summary": gscrape.summarize_matches(records),
-                    "matches": [gscrape.public_match_record(record) for record in records],
+                    "matches": [enrich_match_for_dashboard(run_id, record) for record in records],
                     "audit": audits[-1] if audits else None,
                     "files": {
                         "audit_log": str(LOG_PATH),
@@ -835,6 +1409,7 @@ class Handler(BaseHTTPRequestHandler):
                         "results_dir": str(row["results_dir"] or RESULTS_DIR / run_id),
                         "scan_log": str(RESULTS_DIR / run_id / "SCAN.log"),
                         "progress_log": str(progress_path(run_id)),
+                        "acquired_dir": str(acquired_run_dir(run_id)),
                     },
                     "note": "Reports contain redacted metadata only; secrets and message bodies are never exported.",
                 })
@@ -1121,6 +1696,68 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 LOGGER.info("logging configuration updated")
                 return json_response(self, {"config": config})
+            if parsed.path == "/api/core/accounts":
+                if not isinstance(data, dict):
+                    raise ValueError("account request must be an object")
+                provider_id = str(data.get("provider_id", "gmail")).strip().lower()
+                if provider_id != "gmail":
+                    raise ValueError("unsupported provider")
+                email = str(data.get("email", "")).strip()
+                label = str(data.get("label", "")).strip() or email
+                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 254:
+                    raise ValueError("valid email is required")
+                account_id = core_account_id(data.get("id") or secrets.token_hex(12))
+                with Database(DB_PATH) as database:
+                    database.ensure_provider("gmail", "Gmail")
+                    database.upsert_account(account_id, "gmail", email, label)
+                return json_response(self, {"account": next(a for a in core_account_snapshot() if a["id"] == account_id)}, 201)
+            if parsed.path.startswith("/api/core/accounts/") and parsed.path.endswith("/connect"):
+                account_id = core_account_id(parsed.path.split("/")[4])
+                with Database(DB_PATH) as database:
+                    row = database.connection.execute(
+                        "SELECT email FROM accounts_v2 WHERE id=? AND provider_id='gmail'",
+                        (account_id,),
+                    ).fetchone()
+                    if row is None:
+                        return json_response(self, {"error": "account not found"}, 404)
+                    raw_state = secrets.token_urlsafe(32)
+                    state_hash = hashlib.sha256(raw_state.encode("utf-8")).hexdigest()
+                    verifier = secrets.token_urlsafe(64)
+                    challenge = base64.urlsafe_b64encode(
+                        hashlib.sha256(verifier.encode("utf-8")).digest()
+                    ).rstrip(b"=").decode("ascii")
+                    verifier_ref = SECRET_STORE.put_json({"pkce_verifier": verifier})
+                    session_id = database.create_oauth_session(
+                        "gmail",
+                        state_hash,
+                        OAUTH_REDIRECT_URI,
+                        datetime.fromtimestamp(time.time() + 600, timezone.utc).isoformat(),
+                        row["email"],
+                        hashlib.sha256(verifier.encode("utf-8")).hexdigest(),
+                        verifier_ref.id,
+                    )
+                    database.update_account_health(account_id, "authorizing")
+                return json_response(self, {
+                    "session_id": session_id,
+                    "authorization_url": gmail_authorization_url(
+                        session_id, raw_state, row["email"], challenge,
+                    ),
+                    "status": "authorizing",
+                    "redirect_uri": OAUTH_REDIRECT_URI,
+                })
+            if parsed.path.startswith("/api/core/accounts/") and parsed.path.endswith("/oauth"):
+                account_id = core_account_id(parsed.path.split("/")[4])
+                with Database(DB_PATH) as database:
+                    row = database.connection.execute("SELECT * FROM accounts_v2 WHERE id=?", (account_id,)).fetchone()
+                    if row is None:
+                        return json_response(self, {"error": "account not found"}, 404)
+                    database.update_account_health(account_id, "authorizing")
+                    state_hash = secrets.token_hex(32)
+                    session_id = database.create_oauth_session(
+                        "gmail", state_hash, OAUTH_REDIRECT_URI,
+                        datetime.fromtimestamp(time.time() + 600, timezone.utc).isoformat(), row["email"],
+                    )
+                return json_response(self, {"session_id": session_id, "status": "authorizing", "authorization_required": True})
             if parsed.path == "/api/core/jobs":
                 if not isinstance(data, dict):
                     raise ValueError("job request must be an object")
@@ -1141,12 +1778,21 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     with Database(DB_PATH) as database:
                         account_row = database.connection.execute(
-                            "SELECT email, label FROM accounts WHERE id=? AND status IN ('connected', 'authorizing')",
+                            "SELECT email, label, status FROM accounts_v2 WHERE id=? AND status IN ('connected', 'authorizing')",
                             (account_id,),
                         ).fetchone()
                     if account_row is None:
                         raise ValueError("connected Gmail account was not found")
                     session_file = SESSION_DIR / f"{account_id}.env"
+                    credential = None
+                    with Database(DB_PATH) as database:
+                        credential = database.credential_for_account(account_id)
+                    if credential is not None:
+                        token_payload = SECRET_STORE.get_json(SecretRef(credential["secret_ref"], "local-file"))
+                        session_file = SESSION_DIR / f"{account_id}.env"
+                        write_session_env(session_file, token_payload, account_row["email"])
+                    elif not inspect_legacy_session(session_file).get("has_refresh_token"):
+                        raise ValueError("Gmail account needs authorization before starting a scan")
                     job_config = {
                         "provider": provider,
                         "account_id": account_id,
@@ -1154,12 +1800,15 @@ class Handler(BaseHTTPRequestHandler):
                         "env_file": str(session_file),
                         "categories": data.get("categories"),
                         "query": data.get("query", ""),
-                        "after": data.get("after", DEFAULT_AFTER_DATE),
-                        "before": data.get("before", DEFAULT_BEFORE_DATE),
-                        "max_messages": data.get("max_messages", 100),
+                        "after": data.get("after", ""),
+                        "before": data.get("before", ""),
+                        "max_messages": data.get("max_messages", 10000),
                         "run_id": data.get("run_id", ""),
                         "log_file": data.get("log_file", str(LOG_PATH)),
                         "progress_file": data.get("progress_file", ""),
+                        "attachment_extensions": data.get("attachment_extensions", []),
+                        "attachment_filename_regex": data.get("attachment_filename_regex", ""),
+                        "attachment_discovery": data.get("attachment_discovery", False),
                     }
                     adapter._validate(job_config)
                     account_email = account_row["email"]
@@ -1369,7 +2018,11 @@ def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     configure_logging()
     db().close()
+    recovered = recover_interrupted_runs()
     print(f"GScrape dashboard: http://{HOST}:{PORT}/")
+    print(f"OAuth redirect URI: {OAUTH_REDIRECT_URI}")
+    if recovered:
+        print(f"Recovered {recovered} interrupted run(s) from a prior dashboard process")
     server = ReusableThreadingHTTPServer((HOST, PORT), Handler)
     try:
         server.serve_forever()

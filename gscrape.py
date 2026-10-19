@@ -148,11 +148,13 @@ DEFAULT_RATE_LIMITER = AdaptiveRateLimiter()
 # Core utility helpers (original + enhanced)
 # =============================================================================
 
-def load_dotenv(path: Path) -> Dict[str, str]:
+def load_dotenv(path: Path, *, prefer_file: bool = False) -> Dict[str, str]:
     """Load key=value pairs from a .env-style file into a dict.
 
-    Skips comments and blank lines. Does not overwrite already-set
-    environment variables (callers should merge with os.environ themselves).
+    Skips comments and blank lines. By default does not return keys already set
+    in the process environment. When prefer_file is True (session env files),
+    file values are returned even if ambient environment variables exist so a
+    leftover GMAIL_REFRESH_TOKEN cannot hijack another account's scan.
     Returns an empty dict if the file does not exist.
     """
     values = {}
@@ -165,9 +167,20 @@ def load_dotenv(path: Path) -> Dict[str, str]:
         name, value = line.split("=", 1)
         name = name.strip()
         value = value.strip().strip('"').strip("'")
-        if name and name not in os.environ:
+        if not name:
+            continue
+        if prefer_file or name not in os.environ:
             values[name] = value
     return values
+
+
+def resolve_config_value(name: str, dotenv: Dict[str, str], *, prefer_file: bool = False) -> Optional[str]:
+    """Resolve one config key, optionally preferring a session env-file value."""
+    file_value = dotenv.get(name)
+    env_value = os.environ.get(name)
+    if prefer_file and file_value:
+        return file_value
+    return env_value or file_value
 
 
 def text_from_part(part: Dict[str, Any]) -> str:
@@ -242,7 +255,13 @@ def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_u
     payload = request_json(f"{base_url}/{urllib.parse.quote(message_id, safe='')}/attachments/{urllib.parse.quote(attachment['attachment_id'], safe='')}", api_key, access_token, {}, retries=retries, rate_limiter=rate_limiter)
     raw = base64.urlsafe_b64decode((payload.get("data") or "") + "===")
     destination.write_bytes(raw)
-    return {"filename": safe_name, "size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "status": "acquired"}
+    return {
+        "filename": safe_name,
+        "stored_name": destination.name,
+        "size_bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "status": "acquired",
+    }
 
 
 def redact_metadata(value: Any) -> str:
@@ -307,6 +326,23 @@ def normalize_attachment_extensions(values: Optional[Sequence[str]] = None) -> L
         elif extension:
             raise ValueError("attachment extensions must be simple values such as .pdf or .dat")
     return list(dict.fromkeys(result))
+
+
+def attachment_discovery_query(extensions: Optional[Sequence[str]] = None) -> str:
+    """Build a Gmail query for attachment discovery presets.
+
+    Extension presets (Images, Documents, etc.) must use ``filename:`` operators.
+    A bare date-bounded mailbox walk is too slow and often returns zero useful
+    hits before ``max_messages`` is exhausted. Prefer ``has:attachment`` plus
+    filename operators so PNG/JPG presets behave like an explicit operator search.
+    """
+    normalized = normalize_attachment_extensions(extensions)
+    if not normalized:
+        return "has:attachment"
+    terms = [extension.lstrip(".") for extension in normalized]
+    if len(terms) == 1:
+        return f"has:attachment filename:{terms[0]}"
+    return f"has:attachment filename:({' OR '.join(terms)})"
 
 
 def attachment_filter_matches(filenames: Sequence[str], extensions=(), filename_regex="") -> bool:
@@ -1135,6 +1171,12 @@ def export_matches_json(records: Sequence[Dict[str, Any]], json_path: Path, pret
     return len(enriched)
 
 
+def public_acquired_attachment(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Return non-secret metadata for one acquired attachment."""
+    allowed = ("filename", "stored_name", "size_bytes", "sha256", "status")
+    return {key: item[key] for key in allowed if key in item and item[key] is not None}
+
+
 def public_match_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """Return only approved non-secret fields for reports and exports."""
     fields = (
@@ -1151,6 +1193,11 @@ def public_match_record(record: Dict[str, Any]) -> Dict[str, Any]:
             filenames=result.get("attachment_names") or [],
         ),
     )
+    acquired = record.get("acquired_attachments")
+    if isinstance(acquired, list):
+        result["acquired_attachments"] = [
+            public_acquired_attachment(item) for item in acquired if isinstance(item, dict)
+        ]
     return result
 
 
@@ -1544,12 +1591,11 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
         else [(category, query) for category in categories for query in SEARCH_PASSES[category]]
     )
     if not query_passes and getattr(args, "attachment_discovery", False):
-        # Do not use Gmail's `has:attachment` search operator here.  Gmail
-        # search can omit messages whose attachment metadata is indexed
-        # differently (notably inline/renamed image attachments).  Listing the
-        # bounded historical mailbox and filtering attachment metadata locally
-        # is the reliable discovery path.
-        query_passes = [("attachment", "")]
+        # Extension presets must query Gmail with filename operators.  A prior
+        # empty-query mailbox walk missed Images results that an explicit
+        # `has:attachment filename:(png OR jpg …)` search finds immediately.
+        attachment_query = attachment_discovery_query(attachment_extensions)
+        query_passes = [("attachment", attachment_query)]
     if getattr(args, "verbose", False):
         print(
             f"[search] categories={','.join(categories)} passes={len(query_passes)} "
@@ -1557,6 +1603,12 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
             file=sys.stderr,
             flush=True,
         )
+        for pass_category, pass_query in query_passes:
+            print(
+                f"[search] pass={pass_category} query={pass_query or '(date filter only)'}",
+                file=sys.stderr,
+                flush=True,
+            )
     seen_ids: Set[str] = set()
     scanned_ids: Set[str] = set()
     match_records: Dict[str, Dict[str, Any]] = {}
@@ -1888,14 +1940,17 @@ def main() -> None:
             print(f"Exported {n} matches to {args.export_json}")
         return
 
-    dotenv = load_dotenv(args.env_file)
-    api_key = os.environ.get("GOOGLE_API_KEY", dotenv.get("GOOGLE_API_KEY"))
-    access_token = os.environ.get("GMAIL_ACCESS_TOKEN", dotenv.get("GMAIL_ACCESS_TOKEN"))
-    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN", dotenv.get("GMAIL_REFRESH_TOKEN"))
-    client_id = os.environ.get("GOOGLE_CLIENT_ID", dotenv.get("GOOGLE_CLIENT_ID"))
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", dotenv.get("GOOGLE_CLIENT_SECRET"))
-    redirect_uri = args.redirect_uri or os.environ.get(
-        "GOOGLE_REDIRECT_URI", dotenv.get("GOOGLE_REDIRECT_URI")
+    # Session env files must win over ambient GMAIL_* so multi-account
+    # dashboard scans cannot inherit a stale shell refresh token.
+    prefer_session_file = Path(args.env_file).resolve() != (Path.cwd() / ".env").resolve()
+    dotenv = load_dotenv(args.env_file, prefer_file=prefer_session_file)
+    api_key = resolve_config_value("GOOGLE_API_KEY", dotenv, prefer_file=prefer_session_file)
+    access_token = resolve_config_value("GMAIL_ACCESS_TOKEN", dotenv, prefer_file=prefer_session_file)
+    refresh_token = resolve_config_value("GMAIL_REFRESH_TOKEN", dotenv, prefer_file=prefer_session_file)
+    client_id = resolve_config_value("GOOGLE_CLIENT_ID", dotenv, prefer_file=prefer_session_file)
+    client_secret = resolve_config_value("GOOGLE_CLIENT_SECRET", dotenv, prefer_file=prefer_session_file)
+    redirect_uri = args.redirect_uri or resolve_config_value(
+        "GOOGLE_REDIRECT_URI", dotenv, prefer_file=prefer_session_file
     )
 
     if args.authorize:

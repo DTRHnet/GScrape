@@ -73,10 +73,49 @@ class PatternTests(unittest.TestCase):
         })
         self.assertEqual(config["categories"], [])
 
+    def test_dashboard_acquire_attachments_requires_discovery(self):
+        with self.assertRaises(ValueError):
+            dashboard_server.validate_config({
+                "acquire_attachments": True,
+                "categories": ["wallet"],
+            })
+        config = dashboard_server.validate_config({
+            "attachment_discovery": True,
+            "attachment_extensions": ["jpg", "jpeg"],
+            "acquire_attachments": True,
+        })
+        self.assertTrue(config["acquire_attachments"])
+        self.assertEqual(config["attachment_extensions"], [".jpg", ".jpeg"])
+
+    def test_account_connection_requires_matching_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory) / "session.env"
+            session.write_text("GMAIL_REFRESH_TOKEN=[REDACTED]\n")
+            row = {"session_file": str(session), "email": "mayhemservers@gmail.com"}
+            original = dashboard_server.subprocess.run
+            class Result:
+                returncode = 0
+                stdout = '{"emailAddress":"other@example.com"}'
+                stderr = ""
+            dashboard_server.subprocess.run = lambda *args, **kwargs: Result()
+            try:
+                self.assertFalse(dashboard_server.account_is_connected(row))
+            finally:
+                dashboard_server.subprocess.run = original
+
     def test_attachment_only_query_pass_is_has_attachment(self):
         self.assertEqual(
             scanner.domains_for_categories([], True),
             ["attachments"],
+        )
+        self.assertEqual(scanner.attachment_discovery_query([]), "has:attachment")
+        self.assertEqual(
+            scanner.attachment_discovery_query(["jpg", "jpeg", "png", "gif", "webp"]),
+            "has:attachment filename:(jpg OR jpeg OR png OR gif OR webp)",
+        )
+        self.assertEqual(
+            scanner.attachment_discovery_query([".pdf"]),
+            "has:attachment filename:pdf",
         )
 
     def test_dashboard_validates_contact_filters(self):
@@ -302,10 +341,22 @@ class PatternTests(unittest.TestCase):
             dashboard_server.reconcile_scan_counter(payload, current, "matches"), 7
         )
 
-    def test_dashboard_defaults_to_documented_historical_window(self):
-        config = dashboard_server.validate_config({})
+    def test_dashboard_leaves_date_window_unrestricted_when_unset(self):
+        config = dashboard_server.validate_config({"attachment_discovery": True})
+        self.assertEqual(config["after_date"], "")
+        self.assertEqual(config["before_date"], "")
+        self.assertEqual(config["max_messages"], 10000)
+
+    def test_dashboard_honors_explicit_date_and_message_limits(self):
+        config = dashboard_server.validate_config({
+            "attachment_discovery": True,
+            "after_date": "2013/01/01",
+            "before_date": "2018/12/31",
+            "max_messages": 200,
+        })
         self.assertEqual(config["after_date"], "2013/01/01")
         self.assertEqual(config["before_date"], "2018/12/31")
+        self.assertEqual(config["max_messages"], 200)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,11 @@ class AttachmentAcquisitionTests(unittest.TestCase):
             with patch.object(gscrape, "request_json", return_value={"data": base64.urlsafe_b64encode(b"abc").decode()}):
                 result = gscrape.acquire_attachment_bytes("m1", {"filename": "note.txt", "attachment_id": "a1"}, "https://example.test", None, "token", Path(directory), 0, gscrape.AdaptiveRateLimiter(0, 1))
             self.assertEqual(result["size_bytes"], 3)
+            self.assertEqual(result["stored_name"], "m1_note.txt")
             self.assertEqual(list(Path(directory).iterdir())[0].read_bytes(), b"abc")
+            public = gscrape.public_match_record({"subject": "x", "acquired_attachments": [result]})
+            self.assertEqual(public["acquired_attachments"][0]["stored_name"], "m1_note.txt")
+            self.assertNotIn("data", public["acquired_attachments"][0])
 
 
 if __name__ == "__main__":

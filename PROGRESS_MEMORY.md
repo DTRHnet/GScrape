@@ -97,3 +97,24 @@ telemetry, configurable retention, and production deployment hardening.
 - [x] Added bounded job-event cursor pagination and synthetic coverage.
 - [x] Kept OAuth refresh and live Gmail access explicitly operator-gated.
 - [ ] Complete authorized end-to-end Gmail validation and pagination telemetry.
+
+## Shared dashboard account slice
+
+- [x] Added provider-neutral account upsert/list methods to the shared SQLite control plane.
+- [x] Added dashboard endpoints for shared account records and explicit OAuth-session start state.
+- [x] Wired Settings to display shared account health alongside legacy session controls.
+- [x] Kept OAuth authorization operator-gated; no token or credential values are returned or logged.
+- [ ] Connect the shared OAuth callback to credential-store persistence and migrate legacy `.env` sessions.
+
+Validation: focused control-plane tests and full unittest suite; no live authorization was started.
+Updated: 2026-10-19
+
+## OAuth callback and legacy session slice
+
+- [x] Added atomic shared OAuth-state consumption for dashboard callbacks.
+- [x] Added callback success/denial handling without accepting or logging token values.
+- [x] Added redacted legacy `.env` session inspection for Settings/account health.
+- [ ] Token exchange and credential-store persistence remain an explicit next boundary.
+
+Validation: synthetic callback-state and legacy-session inspection tests; no live OAuth flow started.
+Updated: 2026-10-19

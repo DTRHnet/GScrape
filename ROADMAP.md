@@ -10,9 +10,9 @@ increments without spending time on low-value or redundant test runs.
   credentials, OAuth sessions, jobs, and job events.
 - [x] Add atomic OAuth-state consumption and OS-assigned loopback-port helper.
 - [x] Add secret-reference and provider-neutral model interfaces.
-- [ ] Wire the dashboard to the shared OAuth callback and account records.
-- [ ] Import the existing legacy `.env` authorization without copying secrets
-  into SQLite.
+- [x] Wire dashboard settings to shared provider account records and OAuth-session state.
+- [x] Inspect existing legacy `.env` authorization without copying secrets into SQLite.
+- [x] Add shared OAuth callback state consumption and explicit token-exchange boundary.
 
 ## Planned milestones
 

@@ -29,6 +29,13 @@ Job events are available through bounded cursor pagination at
 `/api/core/jobs/<id>/events?limit=100`; the returned `next_before_id` can be used
 for the next page. Event payloads remain redacted control-plane metadata.
 
+Settings now uses the shared account control plane. Add an account, choose
+**Connect**, and complete Google consent in the opened browser tab. The dashboard
+records only account/session metadata; the OAuth callback deliberately stops at
+the token-exchange boundary until the protected local credential-store step is
+enabled. Existing legacy sessions are recognized only when their profile matches
+the selected account.
+
 ## Overview
 
 GScrape is a self-hosted toolkit for quickly parsing your own email accounts.

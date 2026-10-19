@@ -71,7 +71,7 @@ class GmailProvider:
         self.validate_session_identity(expected_email, profile)
 
     def _validate(self, config: Mapping[str, Any]) -> Dict[str, Any]:
-        allowed = {"account_id", "expected_email", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex"}
+        allowed = {"account_id", "expected_email", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex", "attachment_discovery"}
         unknown = set(config) - allowed
         if unknown:
             raise ValueError("unsupported Gmail job fields")
@@ -93,15 +93,21 @@ class GmailProvider:
             raise ValueError("unsupported Gmail category")
         if set(categories) - self.allowed_categories:
             raise ValueError("unsupported Gmail category")
-        max_messages = int(config.get("max_messages", 100))
+        raw_max = config.get("max_messages", None)
+        if raw_max in (None, "", 0, "0"):
+            max_messages = 10000
+        else:
+            max_messages = int(raw_max)
         if not 1 <= max_messages <= 10000:
             raise ValueError("max_messages must be between 1 and 10000")
         query = str(config.get("query", "")).strip()
         if len(query) > 2000 or re.search(r"(?:token|secret|password|private.?key|seed.?phrase)", query, re.I):
             raise ValueError("query contains unsupported sensitive content")
-        after = str(config.get("after", "2013/01/01"))
-        before = str(config.get("before", "2018/12/31"))
-        if not re.fullmatch(r"\d{4}/\d{2}/\d{2}", after) or not re.fullmatch(r"\d{4}/\d{2}/\d{2}", before):
+        after = str(config.get("after") or "").strip()
+        before = str(config.get("before") or "").strip()
+        if after and not re.fullmatch(r"\d{4}/\d{2}/\d{2}", after):
+            raise ValueError("Gmail dates must use YYYY/MM/DD")
+        if before and not re.fullmatch(r"\d{4}/\d{2}/\d{2}", before):
             raise ValueError("Gmail dates must use YYYY/MM/DD")
         extensions = config.get("attachment_extensions", [])
         if isinstance(extensions, str):
@@ -124,9 +130,12 @@ class GmailProvider:
             raise ValueError("selected Gmail account email is required")
         self._verify_session_identity(validated["env_file"], validated["expected_email"])
         command = [self.python_executable, str(self.scanner_path), "--categories", ",".join(validated["categories"]),
-                   "--after", validated["after"], "--before", validated["before"],
                    "--max-messages", str(validated["max_messages"]), "--env-file", str(validated["env_file"]),
                    "--log-file", str(validated["log_file"])]
+        if validated["after"]:
+            command.extend(["--after", validated["after"]])
+        if validated["before"]:
+            command.extend(["--before", validated["before"]])
         if validated["query"]:
             command.extend(["--query", validated["query"]])
         if validated["run_id"]:

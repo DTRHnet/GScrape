@@ -3,6 +3,7 @@ const state = {
   runs: [],
   profiles: [],
   accounts: [],
+  coreAccounts: [],
   logging: { config: { level: "INFO", max_bytes: 5242880, backup_count: 5 }, files: [], tail: [] },
   analysis: { total_matches: 0, unique_message_ids: 0, high_score_count: 0, category_counts: {} },
   debug: null,
@@ -86,13 +87,35 @@ function bulkActionBar() {
   </div>`;
 }
 
+function attachmentCards(runId, match) {
+  const items = match.acquired_attachments || [];
+  if (!items.length) {
+    const names = (match.attachment_names || []).slice(0, 8).map((name) => esc(name)).join(", ");
+    return names ? `<div class="muted attachment-names">${names}</div>` : '<span class="muted">No acquired files</span>';
+  }
+  return `<div class="attachment-gallery">${items.map((item) => {
+    const label = esc(item.filename || item.stored_name || "attachment");
+    const meta = [
+      item.size_bytes != null ? `${Number(item.size_bytes).toLocaleString()} bytes` : "",
+      item.sha256 ? `sha256 ${String(item.sha256).slice(0, 12)}…` : "",
+    ].filter(Boolean).join(" · ");
+    const thumb = item.thumbnail_url
+      ? `<a class="attachment-thumb" href="${esc(item.download_url || item.thumbnail_url)}" target="_blank" rel="noopener"><img src="${esc(item.thumbnail_url)}" alt="${label}" loading="lazy"></a>`
+      : `<div class="attachment-thumb placeholder">${label.slice(0, 1).toUpperCase()}</div>`;
+    const download = item.download_url
+      ? `<a class="button ghost compact" href="${esc(item.download_url)}" download>Download</a>`
+      : "";
+    return `<article class="attachment-card">${thumb}<div><strong title="${label}">${label}</strong><div class="muted">${esc(meta)}</div><div class="row-actions">${download}</div></div></article>`;
+  }).join("")}</div>`;
+}
+
 function detailExpansion(run) {
   if (!state.detail?.run || state.detail.run.id !== run.id) return "";
   const detail = state.detail;
   const summary = detail.summary || {};
   const findings = detail.matches || [];
   const error = detail.run.error ? `<div class="run-error"><strong>Run issue</strong><span>${esc(detail.run.error)}</span></div>` : "";
-  return `<tr class="detail-row"><td colspan="9"><div class="run-expansion">
+  return `<div class="run-expansion">
     <div class="run-expansion-head"><div><span class="eyebrow section-kicker">RUN DETAIL · ${esc(run.id)}</span><h3>${esc(detail.note || "Redacted run details")}</h3></div><button class="button ghost compact" type="button" data-run-action="details" data-run-id="${esc(run.id)}">Close</button></div>
     <div class="run-metrics">
       <div><span>Pages parsed</span><strong>${run.pages || 0}</strong></div>
@@ -101,28 +124,53 @@ function detailExpansion(run) {
       <div><span>Matches found</span><strong>${summary.total_matches ?? run.matches ?? 0}</strong></div>
     </div>
     ${error}
-    <div class="run-expansion-section"><div class="section-head"><div><strong>Findings</strong><span class="muted">Redacted metadata only</span></div><a class="button ghost compact" href="/api/export?format=run-report&run_id=${encodeURIComponent(run.id)}">Export</a></div>
-      ${findings.length ? `<div class="table-wrap mini-table"><table class="table"><thead><tr><th>Date</th><th>Subject</th><th>Categories</th><th>Location</th></tr></thead><tbody>${findings.map((match) => `<tr><td>${esc(match.message_date)}</td><td>${esc(match.subject)}</td><td>${esc((match.categories || []).join(", "))}</td><td><a class="button ghost compact" target="_blank" href="${esc(match.message_location)}">Open Gmail</a></td></tr>`).join("")}</tbody></table></div>` : '<div class="empty compact-empty">No categorized findings recorded yet.</div>'}
+    <div class="run-expansion-section"><div class="section-head"><div><strong>Findings</strong><span class="muted">Date, sender, subject, and acquired files</span></div><a class="button ghost compact" href="/api/export?format=run-report&run_id=${encodeURIComponent(run.id)}">Export</a></div>
+      ${findings.length ? `<div class="table-wrap mini-table"><table class="table findings-table"><thead><tr><th>Date</th><th>Sender</th><th>Subject</th><th>Attachments</th><th>Location</th></tr></thead><tbody>${findings.map((match) => `<tr>
+        <td>${esc(match.message_date || "")}</td>
+        <td class="wrap-cell">${esc(match.sender || "")}</td>
+        <td class="wrap-cell">${esc(match.subject || "")}<div class="muted">${esc((match.categories || []).join(", "))}</div></td>
+        <td>${attachmentCards(run.id, match)}</td>
+        <td><a class="button ghost compact" target="_blank" rel="noopener" href="${esc(match.message_location || "#")}">Open Gmail</a></td>
+      </tr>`).join("")}</tbody></table></div>` : '<div class="empty compact-empty">No categorized findings recorded yet.</div>'}
     </div>
-    <p class="muted run-files">Result folder: <code>${esc(detail.files?.results_dir || "")}</code><br>Scan log: <code>${esc(detail.files?.scan_log || "")}</code></p>
-  </div></td></tr>`;
+    <p class="muted run-files">Result folder: <code>${esc(detail.files?.results_dir || "")}</code><br>Scan log: <code>${esc(detail.files?.scan_log || "")}</code>${detail.files?.acquired_dir ? `<br>Acquired files: <code>${esc(detail.files.acquired_dir)}</code>` : ""}</p>
+  </div>`;
 }
 
 function runRows({ idPrefix = "runs" } = {}) {
   if (!state.runs.length) return '<div class="card empty">No runs yet. Create your first search to begin.</div>';
   const selected = selectedRunIds();
   const allSelected = selected.length === state.runs.length;
-  return `<div class="table-toolbar"><label class="select-all-control"><span class="checkbox-label"><input type="checkbox" class="select-all-runs" ${allSelected ? "checked" : ""} aria-label="Select all runs"><span class="checkmark"></span></span><span>Select all</span></label><span class="muted">${state.runs.length} recorded run${state.runs.length === 1 ? "" : "s"}</span></div><div class="table-wrap"><table class="table"><thead><tr>
-    <th class="select-column"></th>
-    <th>Run ID</th><th>Status</th><th>Category</th><th>Query</th><th>Scanned</th><th>Matches</th><th>Started</th><th>Actions</th>
-  </tr></thead><tbody>${state.runs.map((run) => `<tr>
-    <td class="select-column"><label class="checkbox-label"><input type="checkbox" class="run-checkbox" data-run-id="${esc(run.id)}" ${selected.includes(run.id) ? "checked" : ""} aria-label="Select run ${esc(run.id)}"><span class="checkmark"></span></label></td>
-    <td><code class="run-id">${esc(run.id)}</code></td><td><span class="badge ${statusClass(run.status)}"><span class="status-dot"></span>${esc(run.status)}</span></td>
-    <td>${esc(run.category)}</td><td>${esc(run.query || "preset")}</td>
-    <td>${run.scanned || 0}</td><td>${run.matches || 0}</td>
-    <td>${esc(new Date(run.started_at).toLocaleString())}</td>
-    <td><div class="row-actions"><button class="button ghost compact" type="button" data-run-action="details" data-run-id="${esc(run.id)}" aria-expanded="${state.detail?.run?.id === run.id}">${state.detail?.run?.id === run.id ? "Close" : "Details"}</button><button class="button ghost compact danger" type="button" data-run-action="delete" data-run-id="${esc(run.id)}">Remove</button></div></td>
-  </tr>${detailExpansion(run)}`).join("")}</tbody></table></div>`;
+  return `<div class="table-toolbar"><label class="select-all-control"><span class="checkbox-label"><input type="checkbox" class="select-all-runs" ${allSelected ? "checked" : ""} aria-label="Select all runs"><span class="checkmark"></span></span><span>Select all</span></label><span class="muted">${state.runs.length} recorded run${state.runs.length === 1 ? "" : "s"}</span></div>
+  <div class="run-list" data-run-list="${esc(idPrefix)}">${state.runs.map((run) => {
+    const open = state.detail?.run?.id === run.id;
+    return `<article class="run-item ${open ? "is-open" : ""}" data-run-id="${esc(run.id)}">
+      <div class="run-row" data-run-toggle="${esc(run.id)}" role="button" tabindex="0" aria-expanded="${open}">
+        <label class="checkbox-label run-select" onclick="event.stopPropagation()"><input type="checkbox" class="run-checkbox" data-run-id="${esc(run.id)}" ${selected.includes(run.id) ? "checked" : ""} aria-label="Select run ${esc(run.id)}"><span class="checkmark"></span></label>
+        <div class="run-main">
+          <div class="run-primary">
+            <code class="run-id">${esc(run.id)}</code>
+            <span class="badge ${statusClass(run.status)}"><span class="status-dot"></span>${esc(run.status)}</span>
+            <span class="run-chevron" aria-hidden="true">›</span>
+          </div>
+          <div class="run-meta">
+            <span>${esc(run.category || "attachments")}</span>
+            <span class="run-meta-sep">·</span>
+            <span class="run-query" title="${esc(run.query || "preset")}">${esc(run.query || "preset")}</span>
+          </div>
+          <div class="run-stats">
+            <span><strong>${run.scanned || 0}</strong> scanned</span>
+            <span><strong>${run.matches || 0}</strong> matches</span>
+            <span>${esc(new Date(run.started_at).toLocaleString())}</span>
+          </div>
+        </div>
+        <div class="run-actions" onclick="event.stopPropagation()">
+          <button class="button ghost compact danger" type="button" data-run-action="delete" data-run-id="${esc(run.id)}">Remove</button>
+        </div>
+      </div>
+      ${detailExpansion(run)}
+    </article>`;
+  }).join("")}</div>`;
 }
 
 function disclosure(id, title, description, content, open = false, actions = "") {
@@ -165,6 +213,14 @@ async function refreshAccounts() {
       node.className = `badge ${account.status === "connected" ? "green" : ""}`;
     }
   });
+}
+
+async function refreshCoreAccounts(shouldRender = false) {
+  try {
+    const payload = await api("/api/core/accounts");
+    state.coreAccounts = payload.accounts || [];
+    if (shouldRender && state.view === "settings") render();
+  } catch (_) { state.coreAccounts = []; }
 }
 
 async function refreshRunState() {
@@ -302,21 +358,24 @@ function render() {
             ["wallet", "Wallet terminology regex"],
           ].map(([value, label]) => `<label data-regex-category="${value}" hidden>${label}<input class="category-regex" data-category="${value}" disabled placeholder="Optional regex"></label>`).join("")}</div>
         </div>
-        <div class="field full attachment-filter" data-category-panel="attachments" hidden><div class="section-head"><strong>Attachment filters</strong><span class="badge">Metadata only</span></div><p class="muted">Search attachment filenames only; files are never downloaded or opened. Optionally narrow by type or filename.</p>
+        <div class="field full attachment-filter" data-category-panel="attachments" hidden><div class="section-head"><strong>Attachment filters</strong><span class="badge">Filename discovery</span></div><p class="muted">Match attachment filenames locally. Optionally narrow by type or filename. Turn on acquisition only when you want bytes saved for dashboard preview/download.</p>
           <div data-attachment-options><div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}" disabled><span>${label}</span></label>`).join("")}</div>
           <label>Custom file types<input name="attachment_extensions" disabled placeholder="pdf,dat,custom"></label>
-          <label>Attachment filename regex<input name="attachment_filename_regex" disabled placeholder="invoice[-_].+\\.pdf$"></label></div>
+          <label>Attachment filename regex<input name="attachment_filename_regex" disabled placeholder="invoice[-_].+\\.pdf$"></label>
+          <label class="category-option acquire-option"><input type="checkbox" name="acquire_attachments" value="1" disabled><span>Acquire matching attachments for dashboard thumbnails and download</span></label></div>
         </div>
         <div class="field full contact-filter" data-category-panel="contacts" hidden><div class="section-head"><strong>Contact filters</strong><span class="badge">Metadata only</span></div><p class="muted">Optionally narrow contacts by email address or domain. These filters inspect message metadata, not message bodies.</p>
           <label>Email address regex<input name="contact_email_regex" disabled placeholder=".+@example\\.com$"></label>
           <label>Email domain<input name="contact_email_domain" disabled placeholder="example.com"></label>
         </div>
-        <div class="field"><label>Maximum messages</label><input name="max_messages" type="number" value="1000" min="1" max="10000"></div>
+        <div class="field"><label>Maximum messages</label><input name="max_messages" type="number" value="" min="1" max="10000" placeholder="No limit (up to 10000)"><p class="muted">Leave blank for no practical limit. Only set a number when you want to cap the scan.</p></div>
         <div class="field"><label>Maximum Gmail requests/second</label><input name="requests_per_second" type="number" value="1" min="0" max="10" step="0.1"><p class="muted">Local pacing ceiling. 0 disables proactive pacing; quota errors still use bounded adaptive backoff.</p></div>
         <div class="field"><label>Maximum adaptive cooldown (seconds)</label><input name="rate_limit_max_delay" type="number" value="60" min="1" max="300" step="1"><p class="muted">Upper bound after rate-limit responses.</p></div>
         <div class="field"><label>Gmail query (optional)</label><input name="query" placeholder="e.g. from:someone@example.com has:attachment"></div>
-        <div class="field"><label>After (default: 2013/01/01)</label><input name="after_date" placeholder="YYYY/MM/DD"></div>
-        <div class="field"><label>Before (default: 2018/12/31, inclusive)</label><input name="before_date" placeholder="YYYY/MM/DD"></div>
+        <div class="field full date-window"><div class="section-head"><label>Date window (optional)</label><button type="button" class="button ghost compact" onclick="applyHistoricalWindow()">Use 2013–2018</button></div>
+          <p class="muted">Leave blank for unrestricted search. Dates are applied only when you enter them.</p>
+          <div class="date-fields"><label>After<input name="after_date" placeholder="YYYY/MM/DD"></label><label>Before (inclusive)<input name="before_date" placeholder="YYYY/MM/DD"></label></div>
+        </div>
         <div class="field full"><label>Local profile note (optional)</label><textarea name="regex" placeholder="Saved for future local refinement; not sent to Gmail"></textarea></div>
         <div class="actions"><button class="button">Start search</button><button type="button" class="button ghost" onclick="saveProfile()">Save profile</button></div>
       </form></div>
@@ -355,6 +414,8 @@ function render() {
         <p class="muted">Log directory: <code>logs/</code> · Files: ${state.logging.files.length}</p>
         <pre class="log-tail">${esc((state.logging.tail || []).join("\n") || "No dashboard log entries yet.")}</pre>
       </div>
+      <div class="card section"><h2>Shared account control plane</h2><p class="muted">These provider-neutral records drive new dashboard jobs. OAuth state is tracked locally; tokens and credentials are never returned by this API.</p>
+      ${state.coreAccounts.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Provider</th><th>Email</th><th>Status</th><th>Legacy session</th><th>Actions</th></tr></thead><tbody>${state.coreAccounts.map((account) => `<tr><td>${esc(account.provider_id)}</td><td>${esc(account.email)}</td><td><span class="badge">${esc(account.status)}</span></td><td>${account.legacy_session?.has_refresh_token ? "Available" : "Not connected"}</td><td><button class="button ghost compact" type="button" onclick="connectCoreAccount('${esc(account.id)}')">Connect</button></td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No shared control-plane accounts yet. Add an account above to register it.</div>'}</div>
       <div class="card section"><h2>Workspace</h2><p class="muted">Source of truth: <code>gscrape.py</code>. Audit log: <code>email-wallet-search.log</code> · Database: <code>dashboard.db</code></p></div>`);
     const loggingForm = $("#logging-form");
     if (loggingForm) loggingForm.elements.level.value = state.logging.config.level;
@@ -433,20 +494,39 @@ function collectSearchConfig(form) {
   });
   const custom = String(data.attachment_extensions || "").split(",").map((value) => value.trim()).filter(Boolean);
   data.attachment_extensions = [...typeExtensions, ...custom];
+  data.acquire_attachments = Boolean(form.querySelector('input[name="acquire_attachments"]')?.checked);
   if (!data.attachment_discovery) {
     data.attachment_extensions = [];
     data.attachment_filename_regex = "";
+    data.acquire_attachments = false;
   }
-  data.max_messages = Number(data.max_messages);
+  const rawMax = String(data.max_messages ?? "").trim();
+  data.max_messages = rawMax === "" ? "" : Number(rawMax);
+  data.after_date = String(data.after_date || "").trim();
+  data.before_date = String(data.before_date || "").trim();
   data.requests_per_second = Number(data.requests_per_second);
   data.rate_limit_max_delay = Number(data.rate_limit_max_delay);
   return data;
 }
 
+function applyHistoricalWindow() {
+  const form = $("#search-form");
+  if (!form) return;
+  form.elements.after_date.value = "2013/01/01";
+  form.elements.before_date.value = "2018/12/31";
+}
+
 async function addAccount(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
-  try { await api("/api/accounts", { method: "POST", body: JSON.stringify(data) }); await load(); go("settings"); }
+  try {
+    await api("/api/accounts", { method: "POST", body: JSON.stringify(data) });
+    await api("/api/core/accounts", { method: "POST", body: JSON.stringify({ provider_id: "gmail", email: data.email, label: data.name }) });
+    await refreshAccounts();
+    await refreshCoreAccounts();
+    event.target.reset();
+    render();
+  }
   catch (error) { alert(error.message); }
 }
 
@@ -463,6 +543,49 @@ async function saveLogging(event) {
 async function refreshLogging() {
   try { state.logging = await api("/api/logging"); render(); }
   catch (error) { alert(error.message); }
+}
+
+async function connectCoreAccount(id) {
+  try {
+    const payload = await api(`/api/core/accounts/${encodeURIComponent(id)}/connect`, { method: "POST", body: "{}" });
+    window.open(payload.authorization_url, "_blank", "noopener,noreferrer");
+    let attempts = 0;
+    const timer = setInterval(async () => {
+      attempts += 1;
+      try { await refreshCoreAccounts(true); } catch (_) {}
+      const account = state.coreAccounts.find((item) => item.id === id);
+      if (account?.status === "connected") {
+        clearInterval(timer);
+        alert(`Connected: ${account.email}. Control is back — you can start a scan.`);
+        go("settings");
+        return;
+      }
+      if (attempts >= 90) {
+        clearInterval(timer);
+        alert("Still waiting for Google authorization. Finish consent in the popup, or click Connect again.");
+      }
+    }, 1000);
+  } catch (error) { alert(error.message); }
+}
+
+function consumeOAuthReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const oauth = params.get("oauth");
+  if (!oauth) return;
+  const accountId = params.get("account_id") || "";
+  const oauthError = params.get("oauth_error") || "";
+  const oauthMessage = params.get("oauth_message") || "";
+  history.replaceState({}, "", "/");
+  go("settings");
+  refreshCoreAccounts(true).then(() => {
+    if (oauth === "connected") {
+      const account = state.coreAccounts.find((item) => item.id === accountId) || state.coreAccounts.find((item) => item.status === "connected");
+      alert(account ? `Connected: ${account.email}. Control is back.` : "Account connected. Control is back.");
+    } else {
+      const detail = oauthMessage || (oauthError ? `OAuth error: ${oauthError}` : "");
+      alert(detail || "Google authorization did not complete. Click Connect and try again.");
+    }
+  }).catch(() => {});
 }
 
 async function authorize(id) {
@@ -497,7 +620,13 @@ async function removeAccount(id) {
   await load(); go("settings");
 }
 
-function go(view) { state.view = view; render(); if (view === "search") loadSuggestions(); if (view === "debug") refreshDebug(); }
+function go(view) {
+  state.view = view;
+  render();
+  if (view === "settings") refreshCoreAccounts(true).catch(() => {});
+  if (view === "search") loadSuggestions();
+  if (view === "debug") refreshDebug();
+}
 
 async function submit(event) {
   event.preventDefault();
@@ -549,12 +678,24 @@ document.addEventListener("click", (event) => {
     if (runAction.dataset.runAction === "delete") deleteRun(id);
     return;
   }
+  const runToggle = event.target.closest("[data-run-toggle]");
+  if (runToggle && !event.target.closest("a, button, input, label, .run-actions, .run-select")) {
+    showRun(runToggle.dataset.runToggle);
+    return;
+  }
   const bulkAction = event.target.closest("[data-bulk-action]");
   if (bulkAction) {
     const action = bulkAction.dataset.bulkAction;
     if (action === "delete") deleteSelectedRuns();
     else exportSelectedRuns(action);
   }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const runToggle = event.target.closest("[data-run-toggle]");
+  if (!runToggle || event.target.closest("a, button, input, label")) return;
+  event.preventDefault();
+  showRun(runToggle.dataset.runToggle);
 });
 document.addEventListener("change", (event) => {
   if (event.target.matches(".run-checkbox")) {
@@ -575,10 +716,14 @@ document.addEventListener("submit", (event) => {
   if (event.target.id === "account-form") addAccount(event);
   if (event.target.id === "logging-form") saveLogging(event);
 });
-load().then(() => setInterval(() => {
-  refreshAccounts().catch(() => {});
-  if (state.view === "overview" || state.view === "history" || state.detail) {
-    refreshRunState().catch(() => {});
-  }
-}, 1500))
+load().then(() => refreshCoreAccounts(true)).then(() => {
+  consumeOAuthReturn();
+  setInterval(() => {
+    refreshAccounts().catch(() => {});
+    refreshCoreAccounts().catch(() => {});
+    if (state.view === "overview" || state.view === "history" || state.detail) {
+      refreshRunState().catch(() => {});
+    }
+  }, 1500);
+})
   .catch((error) => shell(`<div class="card"><h2>Dashboard unavailable</h2><p class="muted">${esc(error.message)}</p></div>`));
