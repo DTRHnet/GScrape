@@ -100,7 +100,7 @@ function attachmentCards(runId, match) {
       item.sha256 ? `sha256 ${String(item.sha256).slice(0, 12)}…` : "",
     ].filter(Boolean).join(" · ");
     const thumb = item.thumbnail_url
-      ? `<a class="attachment-thumb" href="${esc(item.download_url || item.thumbnail_url)}" target="_blank" rel="noopener" aria-label="Open ${label}"><img src="${esc(item.thumbnail_url)}" alt="${label}" loading="lazy" decoding="async"></a>`
+      ? `<a class="attachment-thumb" href="${esc(item.download_url || item.thumbnail_url)}" target="_blank" rel="noopener" aria-label="Open ${label}"><img src="${esc(item.thumbnail_url)}" alt="${label}" loading="lazy" decoding="async" onerror="this.closest('.attachment-thumb').classList.add('load-error');this.replaceWith(Object.assign(document.createElement('div'),{className:'attachment-thumb placeholder',textContent:'!' }));"></a>`
       : `<div class="attachment-thumb placeholder">${label.slice(0, 1).toUpperCase()}</div>`;
     const download = item.download_url
       ? `<a class="button ghost compact" href="${esc(item.download_url)}" download>Download</a>`
@@ -116,7 +116,7 @@ function detailExpansion(run) {
   const findings = detail.matches || [];
   const error = detail.run.error ? `<div class="run-error"><strong>Run issue</strong><span>${esc(detail.run.error)}</span></div>` : "";
   return `<div class="run-expansion">
-    <div class="run-expansion-head"><div><span class="eyebrow section-kicker">RUN DETAIL · ${esc(run.id)}</span><h3>${esc(detail.note || "Redacted run details")}</h3></div><button class="button ghost compact" type="button" data-run-action="details" data-run-id="${esc(run.id)}">Close</button></div>
+    <div class="run-expansion-head"><div><span class="eyebrow section-kicker">RUN DETAIL · ${esc(run.id)}</span><h3>${esc(detail.note || "Redacted run details")}</h3></div><div class="actions"><a class="button ghost compact" href="/run/${encodeURIComponent(run.id)}" target="_blank" rel="noopener">Open full page ↗</a><button class="button ghost compact" type="button" data-run-action="details" data-run-id="${esc(run.id)}">Close</button></div></div>
     <div class="run-metrics">
       <div><span>Pages parsed</span><strong>${run.pages || 0}</strong></div>
       <div><span>Messages returned</span><strong>${run.listed || 0}</strong></div>
@@ -264,6 +264,15 @@ async function showRun(id) {
   } catch (error) { alert(error.message); }
 }
 
+async function loadFullPageRun(id) {
+  try {
+    state.detail = await api(`/api/runs/${encodeURIComponent(id)}`);
+    render();
+  } catch (error) {
+    shell(`<div class="card empty"><h2>Run unavailable</h2><p class="muted">${esc(error.message)}</p><a class="button" href="/">Return to dashboard</a></div>`);
+  }
+}
+
 async function deleteRun(id) {
   if (!confirm("Remove this run from dashboard history? The append-only audit log will be preserved.")) return;
   try {
@@ -326,6 +335,17 @@ function applyTheme(theme) {
 
 function render() {
   const titles = { overview: "Overview", search: "New search", history: "Run history", console: "Console", settings: "Settings", debug: "Debug" };
+  const fullPageRun = location.pathname.match(/^\/run\/([A-Za-z0-9_-]+)$/)?.[1];
+  if (fullPageRun) {
+    $("#title").textContent = `Run ${fullPageRun}`;
+    if (!state.detail?.run || state.detail.run.id !== fullPageRun) {
+      shell('<div class="card empty"><p class="muted">Loading run details…</p></div>');
+      loadFullPageRun(fullPageRun);
+      return;
+    }
+    shell(`<div class="section-head page-heading"><div><p class="eyebrow section-kicker">FULL-PAGE RUN VIEW</p><h2>Run ${esc(fullPageRun)}</h2><p class="muted">Review this discovery run across the full page.</p></div><a class="button ghost" href="/">Back to dashboard</a></div><section class="card full-page-run">${detailExpansion(state.detail.run)}</section>`);
+    return;
+  }
   $("#title").textContent = titles[state.view];
   document.querySelectorAll(".nav").forEach((nav) => nav.classList.toggle("active", nav.dataset.view === state.view));
 

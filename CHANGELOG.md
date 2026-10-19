@@ -2,6 +2,14 @@
 
 All notable changes are documented here. Versions follow semantic versioning.
 
+## [1.1.0] - 2026-10-19
+
+### Added
+
+- Added bounded scrolling for expanded run details.
+- Added full-page run views that open in a new tab.
+- Added cross-run resolution for deduplicated attachment files.
+
 ## [1.0.0] - 2026-10-19
 
 ### Security and discovery

@@ -899,7 +899,10 @@ def load_run_records(run_id):
 
 
 def acquired_run_dir(run_id: str) -> Path:
-    return ACQUIRED_DIR / run_id
+    # Dashboard scans explicitly store acquisitions in the run's result bundle.
+    # Keep the legacy directory as a fallback for older CLI runs only.
+    result_dir = RESULTS_DIR / run_id / "attachments"
+    return result_dir if result_dir.is_dir() else ACQUIRED_DIR / run_id
 
 
 def resolve_acquired_attachment(run_id: str, stored_name: str) -> Path | None:
@@ -907,8 +910,20 @@ def resolve_acquired_attachment(run_id: str, stored_name: str) -> Path | None:
     name = Path(unquote(stored_name or "")).name
     if not name or name in {".", ".."} or "/" in stored_name or "\\" in stored_name:
         return None
-    path = (acquired_run_dir(run_id) / name).resolve()
     root = acquired_run_dir(run_id).resolve()
+    path = (root / name).resolve()
+    if not path.is_file():
+        # A content-hash deduplication hit may refer to an artifact in another
+        # run. Search only result attachment directories, never arbitrary paths.
+        for candidate_root in RESULTS_DIR.glob("*/attachments"):
+            candidate = (candidate_root / name).resolve()
+            try:
+                candidate.relative_to(candidate_root.resolve())
+            except ValueError:
+                continue
+            if candidate.is_file():
+                path, root = candidate, candidate_root.resolve()
+                break
     try:
         path.relative_to(root)
     except ValueError:
@@ -1199,7 +1214,7 @@ def run_scan(run_id, config):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "GScrape/1.3"
+    server_version = "GScrape/1.4"
 
     def log_message(self, *_):
         return
@@ -1220,6 +1235,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = parsed._replace(path=parsed.path.rstrip("/") or "/")
         if parsed.path == "/":
             return self.send_file(STATIC / "index.html", "text/html; charset=utf-8")
+        run_page = re.fullmatch(r"/run/([A-Za-z0-9_-]{1,100})", parsed.path)
+        if run_page:
+            return self.send_file(STATIC / "index.html", "text/html; charset=utf-8")
         if parsed.path.startswith("/assets/"):
             suffix = Path(parsed.path).suffix
             types = {".js": "text/javascript", ".css": "text/css"}
@@ -1227,11 +1245,8 @@ class Handler(BaseHTTPRequestHandler):
         attachment_match = re.fullmatch(r"/api/runs/([A-Za-z0-9_-]{1,100})/attachments/([A-Za-z0-9._-]{1,220})", parsed.path)
         if attachment_match:
             run_id, stored_name = attachment_match.groups()
-            run_dir = (RESULTS_DIR / run_id).resolve()
-            attachment_path = (run_dir / "attachments" / stored_name).resolve()
-            try:
-                attachment_path.relative_to(run_dir / "attachments")
-            except ValueError:
+            attachment_path = resolve_acquired_attachment(run_id, stored_name)
+            if attachment_path is None:
                 return self.send_error(404)
             suffix = attachment_path.suffix.lower()
             content_types = {
@@ -1248,7 +1263,7 @@ class Handler(BaseHTTPRequestHandler):
                     "scanner": SCANNER.name,
                     "local_only": True,
                     "database": str(DB_PATH.name),
-                    "version": "0.6.0",
+                    "version": "1.1.0",
                 })
             if parsed.path == "/api/profiles":
                 return json_response(self, {"profiles": list_rows("profiles")})

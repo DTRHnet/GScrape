@@ -352,6 +352,9 @@ h3 { font-size: 14px; }
 .compact-empty { padding: 18px; }
 .run-files { margin: 14px 0 0; font-size: 11px; overflow-wrap: anywhere; }
 .date-window { padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-strong); }
+.run-expansion { max-height: 620px; overflow-y: auto; overscroll-behavior: contain; }
+.run-expansion-head { position: sticky; top: -1px; z-index: 2; background: var(--panel); }
+.run-expansion-head .actions { display: flex; gap: 8px; align-items: center; }
 .date-window .section-head { margin-bottom: 4px; }
 .date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
 .date-fields label { display: flex; flex-direction: column; gap: 6px; }

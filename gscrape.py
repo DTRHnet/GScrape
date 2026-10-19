@@ -249,6 +249,20 @@ def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_u
     """Download one attachment, reusing an existing file with the same SHA-256."""
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / ".sha256-index.json"
+    identity_index_path = output_dir / ".attachment-index.json"
+    identity = f"{message_id}:{attachment['attachment_id']}"
+    try:
+        identity_index = json.loads(identity_index_path.read_text(encoding="utf-8"))
+        if isinstance(identity_index, dict):
+            existing_name = identity_index.get(identity)
+            existing_path = output_dir / str(existing_name) if existing_name else None
+            if existing_path and existing_path.is_file():
+                return {
+                    "filename": attachment["filename"], "stored_name": existing_path.name,
+                    "size_bytes": existing_path.stat().st_size, "status": "deduplicated",
+                }
+    except (OSError, json.JSONDecodeError):
+        identity_index = {}
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", attachment["filename"])[:180] or "attachment.bin"
     destination = output_dir / f"{message_id}_{safe_name}"
     if destination.exists():
@@ -266,6 +280,8 @@ def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_u
     existing_name = index.get(digest)
     existing_path = output_dir / existing_name if existing_name else None
     if existing_path and existing_path.is_file():
+        identity_index[identity] = existing_path.name
+        identity_index_path.write_text(json.dumps(identity_index, sort_keys=True) + "\n", encoding="utf-8")
         return {
             "filename": safe_name,
             "stored_name": existing_path.name,
@@ -278,6 +294,8 @@ def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_u
     temporary_index = index_path.with_suffix(".tmp")
     temporary_index.write_text(json.dumps(index, sort_keys=True) + "\n", encoding="utf-8")
     temporary_index.replace(index_path)
+    identity_index[identity] = destination.name
+    identity_index_path.write_text(json.dumps(identity_index, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "filename": safe_name,
         "stored_name": destination.name,
