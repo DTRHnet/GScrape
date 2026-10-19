@@ -12,13 +12,13 @@
 > Take control of your email. Search it, understand it, and turn years of
 > messages into useful personal data — locally, privately, and on your terms.
 
-[![Release](https://img.shields.io/badge/release-v1.0.0-2ea44f?style=flat-square)](https://github.com/DTRHnet/GScrape/releases/tag/v1.0.0)
+[![Release](https://img.shields.io/badge/release-v1.1.0-2ea44f?style=flat-square)](https://github.com/DTRHnet/GScrape/releases/tag/v1.1.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Gmail API](https://img.shields.io/badge/API-Gmail%20readonly-ea4335?style=flat-square&logo=gmail&logoColor=white)](https://developers.google.com/gmail/api)
 [![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f?style=flat-square)](#testing)
 [![Security](https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square)](#security-and-data-handling)
 
-**Version:** `1.0.0` · **Status:** major release · **Deployment:** self-hosted
+**Version:** `1.1.0` · **Status:** current release · **Deployment:** self-hosted
 
 The local control plane exposes non-secret account health at `/api/core/health`,
 operational counters at `/api/core/metrics`, and configurable generated-result
@@ -105,6 +105,17 @@ locations and their backups.
 Today, GScrape provides a Gmail scanner, focused search categories, defensive
 MIME parsing, configurable date ranges, explainable scoring, attachment filename
 matching, redacted audit records, adaptive API pacing, and a local dashboard.
+
+The dashboard provides bounded inline run details and a full-page run view that
+opens in a new tab while retaining the application sidebar. Full-page findings
+use image-first, two-row email groups: acquired attachment thumbnails appear in
+the top row, with date, sender, subject/content categories, evidence metadata,
+and the Gmail link below. Thumbnail galleries expand to use the available page
+width, and attachment cards include safe wrapping for filenames and actions.
+Each acquired attachment can be selected with a checkbox; use **Select all** and
+**Download selected** to batch-download the chosen files. Identical attachments
+are deduplicated locally and can be resolved across runs without another
+download.
 
 The project is intended to grow toward:
 
