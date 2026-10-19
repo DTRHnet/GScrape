@@ -9,6 +9,7 @@ heavily commented to explain purpose and behavior.
 import argparse
 import base64
 import csv
+import hashlib
 import html
 import json
 import os
@@ -213,6 +214,35 @@ def attachment_names(part: Dict[str, Any]) -> List[str]:
     for child in part.get("parts", []):
         names.extend(attachment_names(child))
     return names
+
+
+def attachment_parts(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return attachment metadata without touching attachment content."""
+    found = []
+    def walk(part):
+        filename = part.get("filename") or ""
+        body = part.get("body") or {}
+        if filename and body.get("attachmentId"):
+            found.append({"filename": filename, "attachment_id": body["attachmentId"], "size": body.get("size")})
+        for child in part.get("parts") or []:
+            walk(child)
+    walk(payload)
+    return found
+
+
+def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_url: str,
+                             api_key: Optional[str], access_token: str, output_dir: Path,
+                             retries: int, rate_limiter: AdaptiveRateLimiter) -> Dict[str, Any]:
+    """Download one attachment into a new path; never open, extract, or log its bytes."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", attachment["filename"])[:180] or "attachment.bin"
+    destination = output_dir / f"{message_id}_{safe_name}"
+    if destination.exists():
+        destination = output_dir / f"{message_id}_{hashlib.sha256(attachment['attachment_id'].encode()).hexdigest()[:12]}_{safe_name}"
+    payload = request_json(f"{base_url}/{urllib.parse.quote(message_id, safe='')}/attachments/{urllib.parse.quote(attachment['attachment_id'], safe='')}", api_key, access_token, {}, retries=retries, rate_limiter=rate_limiter)
+    raw = base64.urlsafe_b64decode((payload.get("data") or "") + "===")
+    destination.write_bytes(raw)
+    return {"filename": safe_name, "size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "status": "acquired"}
 
 
 def redact_metadata(value: Any) -> str:
@@ -1571,6 +1601,7 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
                 payload = message.get("payload", {})
                 body = normalized_text(text_from_part(payload))
                 filenames = attachment_names(payload)
+                parts = attachment_parts(payload)
                 attachment_match = attachment_filter_matches(
                     filenames, attachment_extensions, attachment_filename_regex,
                 )
@@ -1624,6 +1655,14 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
                 elif record.get("wallet_files") or record.get("recovery_phrases"):
                     base = round(base + 1.5, 2)
                 record["relevance_score"] = base
+                if args.acquire_attachments:
+                    if not getattr(args, "attachment_discovery", False):
+                        raise RuntimeError("attachment acquisition requires --attachment-discovery")
+                    acquired = []
+                    for attachment in parts:
+                        if attachment_filter_matches([attachment["filename"]], attachment_extensions, attachment_filename_regex):
+                            acquired.append(acquire_attachment_bytes(message_id, attachment, base_url, api_key, access_token, args.attachment_output_dir, args.retries, rate_limiter))
+                    record["acquired_attachments"] = acquired
                 append_progress_match(progress_file, args.run_id, record)
             page_token = page.get("nextPageToken")
             if not page_token or len(scanned_ids) >= args.max_messages:
@@ -1696,6 +1735,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attachment-extensions", default="", help="comma-separated attachment extensions, e.g. pdf,dat,zip")
     parser.add_argument("--attachment-filename-regex", default="", help="case-insensitive regex matched against attachment filenames")
     parser.add_argument("--attachment-discovery", action="store_true", help="treat attachment filename discovery as a standalone search mode")
+    parser.add_argument("--acquire-attachments", action="store_true", help="explicitly download matched attachment bytes; never opens or extracts files")
+    parser.add_argument("--attachment-output-dir", type=Path, default=Path("acquired-attachments"), help="new directory for explicitly acquired attachments")
     parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
     parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")

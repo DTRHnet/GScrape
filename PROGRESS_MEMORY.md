@@ -55,6 +55,8 @@ Updated: 2026-10-19
 
 Follow-up slice completed: redacted normalized match metadata is now persisted idempotently into the Phase 2 SQLite tables when run artifacts are written. Message IDs are provider-scoped; attachment and evidence inserts use safe uniqueness constraints. Attachment acquisition remains disabled.
 
+Authorized attachment acquisition is now available only with both `--attachment-discovery` and `--acquire-attachments`. Downloads are saved under the new ignored `acquired-attachments/` directory, collision-safe and SHA-256 indexed, without opening or extracting files. `config.defaults.yaml` documents every CLI default and leaves acquisition disabled.
+
 Validation: `python -m py_compile core/search.py core/storage.py`; `python -m unittest discover -v`.
 Updated: 2026-10-19
 

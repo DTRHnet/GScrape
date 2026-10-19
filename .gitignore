@@ -32,6 +32,7 @@ email-wallet-search.log
 email-wallet-*.log
 email-wallet-*-summary*.md
 results/
+acquired-attachments/
 logs/
 dashboard.db
 PROGRESS.jsonl
