@@ -45,6 +45,17 @@ Updated: 2026-10-18
 Validation: `python -m py_compile gscrape.py dashboard_server.py`; `python -m unittest discover -v`.
 Updated: 2026-10-19
 
+## Phase 2 completion note
+
+- [x] Added provider-neutral `SearchPlan` and normalized result models.
+- [x] Added Gmail provider-side query construction for custom query, sender, subject, MIME, and date filters.
+- [x] Added migration-safe SQLite schema v2 tables for messages, contacts, phone numbers, attachments, and evidence, with deduplication indexes.
+- [x] Added synthetic Phase 2 tests for query planning, result normalization, and schema migration.
+- [ ] Wiring normalized records into live scan persistence and adding attachment acquisition remain later slices.
+
+Validation: `python -m py_compile core/search.py core/storage.py`; `python -m unittest discover -v`.
+Updated: 2026-10-19
+
 ## Part 3 completion note
 
 - [x] Added durable cancellation and retry primitives.

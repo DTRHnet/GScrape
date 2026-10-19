@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterator, Mapping, Optional
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def utc_now() -> str:
@@ -74,6 +74,22 @@ class Database:
             self.connection.commit()
         if current > SCHEMA_VERSION:
             raise RuntimeError(f"database schema {current} is newer than supported {SCHEMA_VERSION}")
+        if current < 2:
+            self._migration_two()
+            self.connection.execute("UPDATE schema_version SET version = 2")
+            self.connection.commit()
+
+    def _migration_two(self) -> None:
+        self.connection.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, provider TEXT NOT NULL, external_id TEXT NOT NULL UNIQUE, message_date TEXT, sender TEXT, subject TEXT, created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS contacts (id INTEGER PRIMARY KEY, message_id TEXT NOT NULL, email TEXT NOT NULL, normalized TEXT NOT NULL, UNIQUE(message_id, normalized), FOREIGN KEY(message_id) REFERENCES messages(id));
+            CREATE TABLE IF NOT EXISTS phone_numbers (id INTEGER PRIMARY KEY, message_id TEXT NOT NULL, value_redacted TEXT NOT NULL, normalized TEXT NOT NULL, UNIQUE(message_id, normalized), FOREIGN KEY(message_id) REFERENCES messages(id));
+            CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, message_id TEXT NOT NULL, filename TEXT NOT NULL, mime_type TEXT, size_bytes INTEGER, sha256 TEXT, status TEXT NOT NULL DEFAULT 'metadata', UNIQUE(message_id, filename), FOREIGN KEY(message_id) REFERENCES messages(id));
+            CREATE TABLE IF NOT EXISTS evidence (id INTEGER PRIMARY KEY, message_id TEXT NOT NULL, domain TEXT NOT NULL, source TEXT NOT NULL, detail_redacted TEXT, UNIQUE(message_id, domain, source, detail_redacted), FOREIGN KEY(message_id) REFERENCES messages(id));
+            CREATE INDEX IF NOT EXISTS idx_messages_provider_date ON messages(provider, message_date);
+            CREATE INDEX IF NOT EXISTS idx_phone_numbers_normalized ON phone_numbers(normalized);
+            CREATE INDEX IF NOT EXISTS idx_attachments_sha256 ON attachments(sha256);
+        """)
 
     def _migration_one(self) -> None:
         self.connection.executescript(
