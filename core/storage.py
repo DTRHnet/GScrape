@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterator, Mapping, Optional
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def utc_now() -> str:
@@ -78,6 +78,10 @@ class Database:
             self._migration_two()
             self.connection.execute("UPDATE schema_version SET version = 2")
             self.connection.commit()
+        if current < 3:
+            self._migration_three()
+            self.connection.execute("UPDATE schema_version SET version = 3")
+            self.connection.commit()
         columns = {row[1] for row in self.connection.execute("PRAGMA table_info(oauth_sessions)")}
         if "pkce_verifier_hash" not in columns:
             self.connection.execute("ALTER TABLE oauth_sessions ADD COLUMN pkce_verifier_hash TEXT")
@@ -85,6 +89,41 @@ class Database:
         if "pkce_verifier_ref" not in columns:
             self.connection.execute("ALTER TABLE oauth_sessions ADD COLUMN pkce_verifier_ref TEXT")
             self.connection.commit()
+
+    def _migration_three(self) -> None:
+        """Add non-secret protected-artifact metadata; payload stays external."""
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS protected_artifacts (
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                account_id TEXT,
+                message_id TEXT,
+                attachment_name TEXT,
+                artifact_type TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                capture_mode TEXT NOT NULL,
+                backend TEXT NOT NULL,
+                backend_ref TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                retention_until TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_protected_artifacts_message
+                ON protected_artifacts(message_id);
+            CREATE TABLE IF NOT EXISTS capture_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id TEXT,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason_code TEXT,
+                run_id TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(artifact_id) REFERENCES protected_artifacts(id)
+            );
+            """
+        )
         # Existing installs created credentials.account_id without UNIQUE, but
         # upsert_credential relies on ON CONFLICT(account_id). Keep one row per
         # account before enforcing uniqueness so Connect can succeed.

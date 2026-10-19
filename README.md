@@ -56,6 +56,20 @@ GScrape is not a hosted analytics service. It is a personal instrument for
 learning from your own records while keeping the account connection, parser,
 results, and secrets under your control.
 
+Crypto discovery uses metadata-only capture by default. Promotional and bulk
+mail is down-ranked, while strong wallet and recovery evidence remains eligible
+for review. Full message or attachment capture is an explicit separate mode and
+requires an approved authenticated-encryption backend; the scanner fails closed
+instead of storing plaintext sensitive material in SQLite. Protected artifact
+metadata may be retained in the local control-plane database, but ordinary logs,
+reports, and dashboard responses never contain seeds, private keys, passwords, or
+attachment bytes.
+
+The included local backend uses AES-256-GCM from the pinned `cryptography`
+dependency. Ciphertext is stored in a mode-0600 protected-artifact directory;
+the master key is stored separately through the local secret store. Protect both
+locations and their backups.
+
 ## What it is for
 
 - **Find forgotten things:** locate a filename, invoice, receipt, account notice,

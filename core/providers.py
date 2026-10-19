@@ -71,10 +71,17 @@ class GmailProvider:
         self.validate_session_identity(expected_email, profile)
 
     def _validate(self, config: Mapping[str, Any]) -> Dict[str, Any]:
-        allowed = {"account_id", "expected_email", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex", "attachment_discovery"}
+        allowed = {"account_id", "expected_email", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex", "attachment_discovery", "capture_mode", "secure_artifact_backend"}
         unknown = set(config) - allowed
         if unknown:
             raise ValueError("unsupported Gmail job fields")
+        capture_mode = str(config.get("capture_mode", "metadata-only"))
+        if capture_mode not in {"metadata-only", "capture-selected", "capture-high-confidence"}:
+            raise ValueError("unsupported artifact capture mode")
+        if capture_mode != "metadata-only" and not config.get("secure_artifact_backend"):
+            raise ValueError("secure encrypted artifact backend is required for capture")
+        if capture_mode != "metadata-only":
+            raise ValueError("Gmail scanner capture integration is not enabled for this provider build")
         env_file = Path(str(config.get("env_file", ""))).expanduser()
         try:
             env_file = env_file.resolve()

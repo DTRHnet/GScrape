@@ -1749,6 +1749,8 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
                 if args.acquire_attachments:
                     if not getattr(args, "attachment_discovery", False):
                         raise RuntimeError("attachment acquisition requires --attachment-discovery")
+                    if getattr(args, "capture_mode", "metadata-only") == "metadata-only":
+                        raise RuntimeError("attachment acquisition requires an explicit capture mode")
                     acquired = []
                     for attachment in parts:
                         if attachment_filter_matches([attachment["filename"]], attachment_extensions, attachment_filename_regex):
@@ -1826,8 +1828,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attachment-extensions", default="", help="comma-separated attachment extensions, e.g. pdf,dat,zip")
     parser.add_argument("--attachment-filename-regex", default="", help="case-insensitive regex matched against attachment filenames")
     parser.add_argument("--attachment-discovery", action="store_true", help="treat attachment filename discovery as a standalone search mode")
-    parser.add_argument("--acquire-attachments", action="store_true", help="download matched attachment bytes (enabled by dashboard defaults); never opens or extracts files")
-    parser.add_argument("--attachment-output-dir", type=Path, default=Path("acquired-attachments"), help="new directory for explicitly acquired attachments")
+    parser.add_argument("--acquire-attachments", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--attachment-output-dir", type=Path, default=Path("acquired-attachments"), help=argparse.SUPPRESS)
     parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
     parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")

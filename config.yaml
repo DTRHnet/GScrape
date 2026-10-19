@@ -7,8 +7,10 @@ category_regex: ""
 attachment_extensions: ""
 attachment_filename_regex: ""
 attachment_discovery: false
-acquire_attachments: true
+acquire_attachments: false
 attachment_output_dir: acquired-attachments
+capture_mode: metadata-only
+secure_artifact_backend: null
 after: ""
 before: ""
 no_date_filter: false

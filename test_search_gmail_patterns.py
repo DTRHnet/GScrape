@@ -14,6 +14,10 @@ spec.loader.exec_module(scanner)
 
 
 class PatternTests(unittest.TestCase):
+    def test_artifact_capture_defaults_are_fail_closed(self):
+        config = dashboard_server.validate_config({})
+        self.assertFalse(config.get("acquire_attachments", True))
+
     def test_adaptive_rate_limiter_paces_and_caps_cooldown(self):
         now = [0.0]
         sleeps = []
@@ -72,7 +76,13 @@ class PatternTests(unittest.TestCase):
             "attachment_extensions": ["pdf"],
         })
         self.assertEqual(config["categories"], [])
-        self.assertTrue(config["acquire_attachments"])
+        self.assertFalse(config["acquire_attachments"])
+
+    def test_dashboard_scan_command_never_includes_attachment_acquisition_flags(self):
+        source = Path(dashboard_server.__file__).read_text(encoding="utf-8")
+        run_scan = source[source.index("def run_scan"):source.index("class Handler")]
+        self.assertNotIn('"--acquire-attachments"', run_scan)
+        self.assertNotIn('"--attachment-output-dir"', run_scan)
 
     def test_dashboard_acquire_attachments_requires_discovery(self):
         with self.assertRaises(ValueError):

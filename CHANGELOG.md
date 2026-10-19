@@ -4,6 +4,12 @@ All notable changes are documented here. Versions follow semantic versioning.
 
 ## [1.0.0] - 2026-10-19
 
+### Security and discovery
+
+- Added fail-closed protected-artifact capture contracts and non-secret artifact metadata tables.
+- Added promotional/bulk-mail relevance classification that preserves strong wallet evidence.
+- Changed attachment acquisition defaults to opt-in; secure capture requires an approved encrypted backend.
+
 ### Added
 
 - Added operator stop, resume, and retry controls for dashboard discovery runs.

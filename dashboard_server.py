@@ -752,7 +752,9 @@ def validate_config(data):
             re.compile(attachment_filename_regex, re.I)
         except re.error as error:
             raise ValueError(f"invalid attachment filename regex: {error}") from error
-    acquire_attachments = bool(data.get("acquire_attachments", attachment_discovery))
+    # Discovery and acquisition are separate: selecting Images enumerates
+    # image metadata, but must never implicitly download image bytes.
+    acquire_attachments = bool(data.get("acquire_attachments", False))
     if acquire_attachments and not attachment_discovery:
         raise ValueError("attachment acquisition requires attachment discovery")
     # Blank / missing max_messages means "no practical limit" (ceiling), not int("").
@@ -1046,10 +1048,10 @@ def run_scan(run_id, config):
     ]
     if config.get("attachment_discovery"):
         args.append("--attachment-discovery")
+    # Discovery runs are always metadata-only. Attachment bytes must be handled
+    # by the separate artifact workflow, never by the Gmail scanner command.
     if config.get("acquire_attachments"):
-        acquire_dir = ROOT / "acquired-attachments" / run_id
-        acquire_dir.mkdir(parents=True, exist_ok=True)
-        args.extend(["--acquire-attachments", "--attachment-output-dir", str(acquire_dir)])
+        raise RuntimeError("attachment acquisition is not supported by account scans")
     for domain in config.get("domains", []):
         args.extend(["--domain", domain])
     if config.get("attachment_extensions"):
