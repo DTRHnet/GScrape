@@ -84,6 +84,15 @@ class PatternTests(unittest.TestCase):
         self.assertNotIn('"--acquire-attachments"', run_scan)
         self.assertNotIn('"--attachment-output-dir"', run_scan)
 
+    def test_legacy_acquisition_setting_does_not_block_scan_configuration(self):
+        config = dashboard_server.validate_config({
+            "attachment_discovery": True,
+            "attachment_extensions": ["png"],
+            "acquire_attachments": True,
+        })
+        self.assertTrue(config["attachment_discovery"])
+        self.assertTrue(config["acquire_attachments"])
+
     def test_dashboard_acquire_attachments_requires_discovery(self):
         with self.assertRaises(ValueError):
             dashboard_server.validate_config({

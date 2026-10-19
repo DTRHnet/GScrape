@@ -1050,8 +1050,9 @@ def run_scan(run_id, config):
         args.append("--attachment-discovery")
     # Discovery runs are always metadata-only. Attachment bytes must be handled
     # by the separate artifact workflow, never by the Gmail scanner command.
-    if config.get("acquire_attachments"):
-        raise RuntimeError("attachment acquisition is not supported by account scans")
+    # Legacy persisted configurations may still contain this boolean. Ignore it
+    # rather than failing a metadata-only account scan; acquisition is no longer
+    # part of the scanner command at all.
     for domain in config.get("domains", []):
         args.extend(["--domain", domain])
     if config.get("attachment_extensions"):
