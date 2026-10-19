@@ -1,7 +1,7 @@
 # GScrape
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/DTRHnet/GScrape/main/logo.jpg" alt="GScrape logo" width="720">
+  <img src="https://github.com/DTRHnet/GScrape/raw/main/logo.jpg?raw=true" alt="GScrape logo" width="720">
 </p>
 
 <p align="center">
