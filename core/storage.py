@@ -91,6 +91,25 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_attachments_sha256 ON attachments(sha256);
         """)
 
+    def persist_normalized_result(self, result) -> str:
+        """Persist redacted normalized metadata idempotently; return local message id."""
+        from .search import normalize_result
+        normalized = normalize_result(result)
+        if not normalized.message_id:
+            raise ValueError("normalized result requires a message id")
+        local_id = f"{normalized.provider}:{normalized.message_id}"
+        with self.transaction() as connection:
+            connection.execute("""INSERT INTO messages(id,provider,external_id,message_date,sender,subject,created_at)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(external_id) DO UPDATE SET message_date=excluded.message_date,sender=excluded.sender,subject=excluded.subject""",
+                (local_id, normalized.provider, normalized.message_id, normalized.message_date, normalized.sender, normalized.subject, utc_now()))
+            for evidence in normalized.evidence:
+                connection.execute("INSERT OR IGNORE INTO evidence(message_id,domain,source,detail_redacted) VALUES(?,?,?,?)",
+                    (local_id, str(evidence.get("domain", "")), str(evidence.get("source", "")), str(evidence.get("detail", evidence.get("detail_redacted", "")))))
+            for attachment in normalized.attachments:
+                connection.execute("""INSERT OR IGNORE INTO attachments(message_id,filename,mime_type,size_bytes,sha256,status) VALUES(?,?,?,?,?,?)""",
+                    (local_id, str(attachment.get("filename", "")), str(attachment.get("mime_type", "")), attachment.get("size_bytes"), attachment.get("sha256"), str(attachment.get("status", "metadata"))))
+            return local_id
+
     def _migration_one(self) -> None:
         self.connection.executescript(
             """

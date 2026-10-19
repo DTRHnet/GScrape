@@ -22,6 +22,15 @@ class Phase2SearchTests(unittest.TestCase):
                 names = {row["name"] for row in database.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 self.assertTrue({"messages", "contacts", "phone_numbers", "attachments", "evidence"}.issubset(names))
 
+    def test_normalized_persistence_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with Database(Path(directory) / "state.db") as database:
+                record = {"provider": "Gmail", "message_id": "m1", "subject": "safe", "domains": ("content",), "evidence": ({"domain": "content", "source": "message", "detail": "matched"},), "attachments": ({"filename": "note.txt", "status": "metadata"},)}
+                database.persist_normalized_result(record)
+                database.persist_normalized_result(record)
+                self.assertEqual(database.connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+                self.assertEqual(database.connection.execute("SELECT COUNT(*) FROM attachments").fetchone()[0], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

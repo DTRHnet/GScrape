@@ -53,6 +53,8 @@ Updated: 2026-10-19
 - [x] Added synthetic Phase 2 tests for query planning, result normalization, and schema migration.
 - [ ] Wiring normalized records into live scan persistence and adding attachment acquisition remain later slices.
 
+Follow-up slice completed: redacted normalized match metadata is now persisted idempotently into the Phase 2 SQLite tables when run artifacts are written. Message IDs are provider-scoped; attachment and evidence inserts use safe uniqueness constraints. Attachment acquisition remains disabled.
+
 Validation: `python -m py_compile core/search.py core/storage.py`; `python -m unittest discover -v`.
 Updated: 2026-10-19
 

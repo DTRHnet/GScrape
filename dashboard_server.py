@@ -294,6 +294,11 @@ def write_run_artifacts(run_id, run_row, records, status, error=None):
     run_dir.mkdir(parents=True, exist_ok=True)
     summary = gscrape.summarize_matches(records)
     public_records = [gscrape.public_match_record(record) for record in records]
+    with Database(DB_PATH) as database:
+        from core.search import result_from_match
+        for record in public_records:
+            if record.get("message_id") or record.get("id"):
+                database.persist_normalized_result(result_from_match(record).__dict__)
     phone_records = [record for record in public_records if "phone" in record.get("categories", [])]
     crypto_categories = {"gourl", "wallet", "wallet-file", "seed", "crypto-address"}
     crypto_records = [

@@ -57,3 +57,13 @@ def normalize_result(record: Mapping[str, Any]) -> NormalizedResult:
         subject=str(record.get("subject", "")), domains=tuple(str(x) for x in record.get("domains", record.get("categories", ()))),
         evidence=tuple(record.get("evidence", ())), attachments=tuple(record.get("attachments", ())),
     )
+
+
+def result_from_match(record: Mapping[str, Any]) -> NormalizedResult:
+    """Convert a redacted legacy scanner record into the normalized model."""
+    evidence = tuple({"domain": str(category), "source": "message_metadata", "detail": "matched"}
+                     for category in record.get("categories", ()))
+    attachments = tuple({"filename": str(name), "status": "metadata"}
+                        for name in record.get("attachment_names", ()))
+    return normalize_result({**record, "message_id": record.get("message_id", record.get("id", "")),
+                             "evidence": evidence, "attachments": attachments})
