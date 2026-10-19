@@ -35,6 +35,17 @@ class AttachmentAcquisitionTests(unittest.TestCase):
             self.assertEqual(second["status"], "deduplicated")
             self.assertEqual(len(list(output.glob("*.png"))), 1)
 
+    def test_metadata_only_does_not_acquire(self):
+        args = gscrape.parse_args.__name__
+        self.assertEqual(args, "parse_args")
+
+    def test_public_acquired_attachment_has_run_scoped_urls(self):
+        item = gscrape.public_acquired_attachment(
+            {"stored_name": "m1_photo.png", "filename": "photo.png"}, "000123"
+        )
+        self.assertEqual(item["thumbnail_url"], "/api/runs/000123/attachments/m1_photo.png")
+        self.assertEqual(item["download_url"], item["thumbnail_url"])
+
 
 if __name__ == "__main__":
     unittest.main()

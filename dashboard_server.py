@@ -752,12 +752,10 @@ def validate_config(data):
             re.compile(attachment_filename_regex, re.I)
         except re.error as error:
             raise ValueError(f"invalid attachment filename regex: {error}") from error
-    # Discovery and acquisition are separate: selecting Images enumerates
-    # image metadata, but must never implicitly download image bytes.
-    # Legacy clients may still submit this field. Account scans are always
-    # metadata-only, so normalize it away instead of allowing stale settings to
-    # affect validation or execution.
-    acquire_attachments = False
+    # Discovery and acquisition are separate: bytes require an explicit opt-in.
+    acquire_attachments = bool(data.get("acquire_attachments", False))
+    if acquire_attachments and not attachment_discovery:
+        raise ValueError("attachment acquisition requires attachment discovery")
     # Blank / missing max_messages means "no practical limit" (ceiling), not int("").
     raw_max_messages = data.get("max_messages", None)
     if isinstance(raw_max_messages, str):
@@ -1049,11 +1047,10 @@ def run_scan(run_id, config):
     ]
     if config.get("attachment_discovery"):
         args.append("--attachment-discovery")
-    # Discovery runs are always metadata-only. Attachment bytes must be handled
-    # by the separate artifact workflow, never by the Gmail scanner command.
-    # Legacy persisted configurations may still contain this boolean. Ignore it
-    # rather than failing a metadata-only account scan; acquisition is no longer
-    # part of the scanner command at all.
+    # Acquisition is explicit and isolated to this run's result directory.
+    if config.get("acquire_attachments"):
+        args.extend(["--acquire-attachments", "--capture-mode", "acquired",
+                     "--attachment-output-dir", str(RESULTS_DIR / run_id / "attachments")])
     for domain in config.get("domains", []):
         args.extend(["--domain", domain])
     if config.get("attachment_extensions"):
@@ -1227,6 +1224,22 @@ class Handler(BaseHTTPRequestHandler):
             suffix = Path(parsed.path).suffix
             types = {".js": "text/javascript", ".css": "text/css"}
             return self.send_file(STATIC / parsed.path.removeprefix("/"), types.get(suffix, "text/plain"))
+        attachment_match = re.fullmatch(r"/api/runs/([A-Za-z0-9_-]{1,100})/attachments/([A-Za-z0-9._-]{1,220})", parsed.path)
+        if attachment_match:
+            run_id, stored_name = attachment_match.groups()
+            run_dir = (RESULTS_DIR / run_id).resolve()
+            attachment_path = (run_dir / "attachments" / stored_name).resolve()
+            try:
+                attachment_path.relative_to(run_dir / "attachments")
+            except ValueError:
+                return self.send_error(404)
+            suffix = attachment_path.suffix.lower()
+            content_types = {
+                ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+                ".svg": "image/svg+xml", ".pdf": "application/pdf",
+            }
+            return self.send_file(attachment_path, content_types.get(suffix, "application/octet-stream"))
         try:
             if parsed.path == "/api/status":
                 return json_response(self, {

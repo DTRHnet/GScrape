@@ -78,24 +78,24 @@ class PatternTests(unittest.TestCase):
         self.assertEqual(config["categories"], [])
         self.assertFalse(config["acquire_attachments"])
 
-    def test_dashboard_scan_command_never_includes_attachment_acquisition_flags(self):
+    def test_dashboard_scan_command_contains_opt_in_acquisition_path(self):
         source = Path(dashboard_server.__file__).read_text(encoding="utf-8")
         run_scan = source[source.index("def run_scan"):source.index("class Handler")]
-        self.assertNotIn('"--acquire-attachments"', run_scan)
-        self.assertNotIn('"--attachment-output-dir"', run_scan)
+        self.assertIn('"--acquire-attachments"', run_scan)
+        self.assertIn('"--attachment-output-dir"', run_scan)
 
-    def test_legacy_acquisition_setting_does_not_block_scan_configuration(self):
+    def test_explicit_acquisition_requires_attachment_discovery(self):
+        with self.assertRaises(ValueError):
+            dashboard_server.validate_config({"acquire_attachments": True})
+
+    def test_explicit_acquisition_is_preserved(self):
         config = dashboard_server.validate_config({
             "attachment_discovery": True,
             "attachment_extensions": ["png"],
             "acquire_attachments": True,
         })
         self.assertTrue(config["attachment_discovery"])
-        self.assertFalse(config["acquire_attachments"])
-
-    def test_dashboard_legacy_acquisition_setting_is_normalized(self):
-        config = dashboard_server.validate_config({"acquire_attachments": True})
-        self.assertFalse(config["acquire_attachments"])
+        self.assertTrue(config["acquire_attachments"])
 
     def test_account_connection_requires_matching_profile(self):
         with tempfile.TemporaryDirectory() as directory:

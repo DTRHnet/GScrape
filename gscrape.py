@@ -1194,10 +1194,16 @@ def export_matches_json(records: Sequence[Dict[str, Any]], json_path: Path, pret
     return len(enriched)
 
 
-def public_acquired_attachment(item: Dict[str, Any]) -> Dict[str, Any]:
+def public_acquired_attachment(item: Dict[str, Any], run_id: str = "") -> Dict[str, Any]:
     """Return non-secret metadata for one acquired attachment."""
     allowed = ("filename", "stored_name", "size_bytes", "sha256", "status")
-    return {key: item[key] for key in allowed if key in item and item[key] is not None}
+    result = {key: item[key] for key in allowed if key in item and item[key] is not None}
+    if run_id and item.get("stored_name"):
+        encoded_run = urllib.parse.quote(str(run_id), safe="")
+        encoded_name = urllib.parse.quote(str(item["stored_name"]), safe="")
+        result["download_url"] = f"/api/runs/{encoded_run}/attachments/{encoded_name}"
+        result["thumbnail_url"] = result["download_url"]
+    return result
 
 
 def public_match_record(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -1219,7 +1225,8 @@ def public_match_record(record: Dict[str, Any]) -> Dict[str, Any]:
     acquired = record.get("acquired_attachments")
     if isinstance(acquired, list):
         result["acquired_attachments"] = [
-            public_acquired_attachment(item) for item in acquired if isinstance(item, dict)
+            public_acquired_attachment(item, str(record.get("run_id") or ""))
+            for item in acquired if isinstance(item, dict)
         ]
     return result
 
@@ -1830,6 +1837,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attachment-discovery", action="store_true", help="treat attachment filename discovery as a standalone search mode")
     parser.add_argument("--acquire-attachments", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--attachment-output-dir", type=Path, default=Path("acquired-attachments"), help=argparse.SUPPRESS)
+    parser.add_argument("--capture-mode", choices=["metadata-only", "acquired"], default="metadata-only", help=argparse.SUPPRESS)
     parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
     parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
     parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")
