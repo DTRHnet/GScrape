@@ -46,13 +46,19 @@ class PatternTests(unittest.TestCase):
         self.assertEqual(config["requests_per_second"], 0.5)
         self.assertEqual(config["rate_limit_max_delay"], 90.0)
 
-    def test_dashboard_attachment_discovery_is_explicitly_enabled(self):
+    def test_dashboard_attachment_filters_require_attachment_discovery(self):
         config = dashboard_server.validate_config({
             "attachment_extensions": ["pdf", "dat"],
             "attachment_filename_regex": r"invoice-\d+\.pdf$",
         })
         self.assertFalse(config["attachment_discovery"])
         self.assertEqual(config["attachment_extensions"], [])
+        section = dashboard_server.validate_config({
+            "categories": ["attachments"],
+            "attachment_extensions": ["pdf"],
+        })
+        self.assertTrue(section["attachment_discovery"])
+        self.assertEqual(section["categories"], [])
         enabled = dashboard_server.validate_config({
             "attachment_discovery": True,
             "attachment_extensions": ["pdf"],
@@ -66,6 +72,25 @@ class PatternTests(unittest.TestCase):
             "attachment_extensions": ["pdf"],
         })
         self.assertEqual(config["categories"], [])
+
+    def test_attachment_only_query_pass_is_has_attachment(self):
+        self.assertEqual(
+            scanner.domains_for_categories([], True),
+            ["attachments"],
+        )
+
+    def test_dashboard_validates_contact_filters(self):
+        config = dashboard_server.validate_config({
+            "domains": ["contacts"],
+            "contact_email_regex": r".+@example\.com$",
+            "contact_email_domain": "example.com",
+        })
+        self.assertEqual(config["contact_email_domain"], "example.com")
+        with self.assertRaises(ValueError):
+            dashboard_server.validate_config({
+                "domains": ["contacts"],
+                "contact_email_domain": "example.com; DROP TABLE contacts",
+            })
 
     def test_dashboard_rejects_unsafe_rate_limit_values(self):
         with self.assertRaises(ValueError):

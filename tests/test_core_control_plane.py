@@ -30,6 +30,36 @@ class CoreControlPlaneTests(unittest.TestCase):
                 module.subprocess.run = original
             self.assertEqual(len(calls), 2)
 
+    def test_gmail_session_identity_must_match_selected_account(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = GmailProvider(Path(directory) / "missing.py", Path(directory))
+            provider.validate_session_identity("User@Example.com", {"emailAddress": "user@example.com"})
+            with self.assertRaises(ValueError):
+                provider.validate_session_identity("user@example.com", {"emailAddress": "other@example.com"})
+
+    def test_gmail_execute_verifies_profile_before_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = root / "session.env"
+            session.write_text("GMAIL_REFRESH_TOKEN=[REDACTED]\n")
+            scanner = root / "gscrape.py"
+            scanner.write_text("")
+            provider = GmailProvider(scanner, root, python_executable="python")
+            calls = []
+            module = __import__("core.providers", fromlist=["subprocess"])
+            original = module.subprocess.run
+            class Result:
+                returncode = 0
+                stdout = '{"emailAddress":"user@example.com"}'
+                stderr = ""
+            module.subprocess.run = lambda command, **kwargs: (calls.append(command) or Result())
+            try:
+                provider.execute({"account_id": "a", "expected_email": "user@example.com", "env_file": str(session), "categories": ["identity"]})
+            finally:
+                module.subprocess.run = original
+            self.assertEqual(calls[0][2], "--profile-check")
+            self.assertEqual(calls[1][2], "--categories")
+
     def test_event_retention_keeps_newest_events(self):
         with tempfile.TemporaryDirectory() as directory:
             with Database(Path(directory) / "state.db") as database:

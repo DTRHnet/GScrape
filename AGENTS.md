@@ -47,6 +47,14 @@ Keep email discovery, artifact preservation, and wallet recovery as distinct wor
 - If authentication, consent, MFA, or account selection requires user action, stop and ask the user to complete it. Do not attempt to bypass account protections.
 - Do not create a remote browser session or separate browser profile to circumvent the user’s existing authenticated session.
 
+### 4.1.1 Explicit operator authorization (recorded 2026-10-19)
+
+- The workspace owner has explicitly authorized the agent to restart the local dashboard, use the existing local browser session where available, and run controlled Gmail live scans without requesting separate confirmation for each run.
+- This authorization covers discovery scans and attachment-metadata discovery. It does not authorize bypassing Gmail authentication, MFA, consent, account selection, or other provider protections.
+- The agent may acquire attachment bytes only when the scan request explicitly enables acquisition; acquisition remains separate from discovery and must preserve originals and write to a new path.
+- The authorization does permit printing, logging, transmitting, or committing secrets, message bodies, attachment contents, tokens, or OAuth credentials. Reports and logs must remain redacted.
+- If no already-authorized account/session is available, the agent must stop at the authorization boundary and report the non-secret reason rather than attempting to bypass it.
+
 ### 4.2 Search strategy
 
 Use multiple focused search passes rather than depending on a single query or keyword. Keep each pass identifiable so that results can be audited and deduplicated.

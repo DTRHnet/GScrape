@@ -371,6 +371,9 @@ def read_json(handler):
 
 def validate_config(data):
     category = str(data.get("category", "all"))
+    # The dashboard's canonical control is the Attachments discovery section.
+    # Keep the explicit field for API/legacy clients, but derive the effective
+    # value from either spelling so older clients remain compatible.
     attachment_discovery = bool(data.get("attachment_discovery", False))
     raw_domains = data.get("domains", [])
     if isinstance(raw_domains, str):
@@ -386,6 +389,9 @@ def validate_config(data):
         categories = [str(item).strip() for item in raw_categories if str(item).strip()]
     else:
         categories = [item.strip() for item in str(raw_categories).split(",") if item.strip()]
+    if "attachments" in categories:
+        categories = [item for item in categories if item != "attachments"]
+        attachment_discovery = True
     if not categories and not attachment_discovery:
         raise ValueError("select at least one discovery category")
     if any(item not in gscrape.CATEGORY_PATTERNS for item in categories):
@@ -418,6 +424,15 @@ def validate_config(data):
     except ValueError as error:
         raise ValueError(str(error)) from error
     attachment_filename_regex = str(data.get("attachment_filename_regex", "")).strip()
+    contact_email_regex = str(data.get("contact_email_regex", "")).strip()
+    contact_email_domain = str(data.get("contact_email_domain", "")).strip()
+    if contact_email_regex:
+        try:
+            re.compile(contact_email_regex, re.I)
+        except re.error as error:
+            raise ValueError(f"invalid contact email regex: {error}") from error
+    if contact_email_domain and not re.fullmatch(r"[A-Za-z0-9.-]+", contact_email_domain):
+        raise ValueError("invalid contact email domain")
     if attachment_discovery and not categories:
         categories = []
     if not categories and not attachment_discovery:
@@ -456,6 +471,8 @@ def validate_config(data):
         "regex": regex,
         "attachment_extensions": attachment_extensions,
         "attachment_filename_regex": attachment_filename_regex,
+        "contact_email_regex": contact_email_regex,
+        "contact_email_domain": contact_email_domain,
         "attachment_discovery": attachment_discovery,
         "domains": domains or gscrape.domains_for_categories(categories, attachment_discovery),
         "after_date": after_date,
@@ -618,6 +635,8 @@ def run_scan(run_id, config):
         "--requests-per-second", str(config["requests_per_second"]),
         "--rate-limit-max-delay", str(config["rate_limit_max_delay"]),
     ]
+    if config.get("attachment_discovery"):
+        args.append("--attachment-discovery")
     for domain in config.get("domains", []):
         args.extend(["--domain", domain])
     if config.get("attachment_extensions"):
@@ -637,6 +656,21 @@ def run_scan(run_id, config):
         ).fetchone()
         account_connection.close()
         if account:
+            profile_result = subprocess.run(
+                [str(PYTHON if PYTHON.exists() else sys.executable), str(SCANNER),
+                 "--profile-check", "--env-file", account["session_file"]],
+                cwd=ROOT, text=True, capture_output=True, timeout=120,
+            )
+            if profile_result.returncode:
+                raise RuntimeError("Gmail session profile verification failed")
+            try:
+                profile = json.loads(profile_result.stdout)
+            except (TypeError, ValueError) as error:
+                raise RuntimeError("Gmail session profile verification returned invalid data") from error
+            actual = str(profile.get("emailAddress", "")).strip().casefold()
+            expected = str(account["email"] or "").strip().casefold()
+            if not actual or actual != expected:
+                raise RuntimeError("Gmail session identity does not match the selected account")
             args.extend(["--env-file", account["session_file"]])
     if config["query"]:
         args.extend(["--query", config["query"]])
@@ -1116,6 +1150,7 @@ class Handler(BaseHTTPRequestHandler):
                     job_config = {
                         "provider": provider,
                         "account_id": account_id,
+                        "expected_email": account_row["email"],
                         "env_file": str(session_file),
                         "categories": data.get("categories"),
                         "query": data.get("query", ""),
@@ -1204,7 +1239,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/accounts/") and parsed.path.endswith("/remove"):
                 account_id = parsed.path.split("/")[3]
                 connection = db()
-                row = connection.execute("SELECT session_file FROM accounts WHERE id=?", (account_id,)).fetchone()
+                row = connection.execute("SELECT session_file, email FROM accounts WHERE id=?", (account_id,)).fetchone()
                 connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
                 connection.commit()
                 connection.close()
@@ -1214,12 +1249,12 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/accounts/") and parsed.path.endswith("/authorize"):
                 account_id = parsed.path.split("/")[3]
                 connection = db()
-                row = connection.execute("SELECT session_file FROM accounts WHERE id=?", (account_id,)).fetchone()
+                row = connection.execute("SELECT session_file, email FROM accounts WHERE id=?", (account_id,)).fetchone()
                 connection.close()
                 if not row:
                     return json_response(self, {"error": "account not found"}, 404)
                 subprocess.Popen([str(PYTHON if PYTHON.exists() else sys.executable), str(SCANNER),
-                                  "--authorize", "--env-file", row["session_file"]],
+                                  "--authorize", "--account-email", row["email"], "--env-file", row["session_file"]],
                                  cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 connection = db()
                 connection.execute("UPDATE accounts SET status=? WHERE id=?", ("authorizing", account_id))

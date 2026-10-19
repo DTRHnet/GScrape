@@ -292,20 +292,24 @@ function render() {
           <div class="category-grid">${[
             ["attachments", "Attachments"], ["phone-numbers", "Phone Numbers"], ["contacts", "Contacts"],
             ["content", "Content"], ["crypto", "Crypto"], ["identity", "Identity"],
-          ].map(([value, label]) => `<label class="category-option"><input type="checkbox" name="categories" value="${value}"><span>${label}</span></label>`).join("")}</div>
+          ].map(([value, label]) => `<label class="category-option"><input type="checkbox" name="domains" value="${value}" onchange="toggleCategoryPanel('${value}', this.checked)"><span>${label}</span></label>`).join("")}</div>
         </div>
-        <div class="field full expert-options"><label>Expert regex overrides (optional)</label><p class="muted">These are local, case-insensitive additions to the selected detector. Use one pattern per section; leave blank to keep the safe default.</p>
+        <div class="field full expert-options"><label>Detector regex overrides (optional)</label><p class="muted">Only the controls for selected discovery sections are shown. Expressions are local, case-insensitive additions to the selected detector.</p>
           <div class="regex-grid">${[
             ["phone", "Phone format regex"], ["wallet-file", "Wallet filename regex"],
             ["seed", "Recovery cue/word regex"], ["crypto-address", "Crypto address regex"],
             ["gourl", "GoURL variant regex"], ["identity", "Identity variant regex"],
             ["wallet", "Wallet terminology regex"],
-          ].map(([value, label]) => `<label>${label}<input class="category-regex" data-category="${value}" placeholder="Optional regex"></label>`).join("")}</div>
+          ].map(([value, label]) => `<label data-regex-category="${value}" hidden>${label}<input class="category-regex" data-category="${value}" disabled placeholder="Optional regex"></label>`).join("")}</div>
         </div>
-        <div class="field full attachment-filter"><div class="section-head"><label><input type="checkbox" name="attachment_discovery" value="on" onchange="toggleAttachmentDiscovery(this)"> Enable attachment discovery</label><span class="badge">Metadata only</span></div><p class="muted">When enabled, GScrape searches attachment filenames without downloading or opening files. Select common types or enter extensions such as <code>.pdf,.dat</code>.</p>
-          <div data-attachment-options aria-disabled="true" style="opacity:.55;pointer-events:none"><div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}"><span>${label}</span></label>`).join("")}</div>
-          <label>Custom file types<input name="attachment_extensions" placeholder="pdf,dat,custom"></label>
-          <label>Attachment filename regex<input name="attachment_filename_regex" placeholder="invoice[-_].+\\.pdf$"></label></div>
+        <div class="field full attachment-filter" data-category-panel="attachments" hidden><div class="section-head"><strong>Attachment filters</strong><span class="badge">Metadata only</span></div><p class="muted">Search attachment filenames only; files are never downloaded or opened. Optionally narrow by type or filename.</p>
+          <div data-attachment-options><div class="category-grid">${Object.entries({documents:"Documents",spreadsheets:"Spreadsheets",archives:"Archives",images:"Images",wallets:"Wallet / backup files",email:"Email exports"}).map(([value,label]) => `<label class="category-option"><input type="checkbox" name="attachment_type" value="${value}" disabled><span>${label}</span></label>`).join("")}</div>
+          <label>Custom file types<input name="attachment_extensions" disabled placeholder="pdf,dat,custom"></label>
+          <label>Attachment filename regex<input name="attachment_filename_regex" disabled placeholder="invoice[-_].+\\.pdf$"></label></div>
+        </div>
+        <div class="field full contact-filter" data-category-panel="contacts" hidden><div class="section-head"><strong>Contact filters</strong><span class="badge">Metadata only</span></div><p class="muted">Optionally narrow contacts by email address or domain. These filters inspect message metadata, not message bodies.</p>
+          <label>Email address regex<input name="contact_email_regex" disabled placeholder=".+@example\\.com$"></label>
+          <label>Email domain<input name="contact_email_domain" disabled placeholder="example.com"></label>
         </div>
         <div class="field"><label>Maximum messages</label><input name="max_messages" type="number" value="1000" min="1" max="10000"></div>
         <div class="field"><label>Maximum Gmail requests/second</label><input name="requests_per_second" type="number" value="1" min="0" max="10" step="0.1"><p class="muted">Local pacing ceiling. 0 disables proactive pacing; quota errors still use bounded adaptive backoff.</p></div>
@@ -387,37 +391,41 @@ function useSuggestion(query) {
 }
 
 function setCategories(selected) {
-  document.querySelectorAll('input[name="categories"]').forEach((input) => {
+  document.querySelectorAll('input[name="domains"]').forEach((input) => {
     input.checked = selected;
+    toggleCategoryPanel(input.value, selected);
   });
 }
 
-function toggleAttachmentDiscovery(toggle) {
-  const options = document.querySelector("[data-attachment-options]");
-  if (!options) return;
-  options.setAttribute("aria-disabled", String(!toggle.checked));
-  options.style.opacity = toggle.checked ? "1" : ".55";
-  options.style.pointerEvents = toggle.checked ? "auto" : "none";
-  if (!toggle.checked) {
-    options.querySelectorAll("input").forEach((input) => {
-      if (input.type === "checkbox") input.checked = false;
-      else input.value = "";
-    });
+function toggleCategoryPanel(category, selected) {
+  const panel = document.querySelector(`[data-category-panel="${category}"]`);
+  if (panel) {
+    panel.hidden = !selected;
+    panel.querySelectorAll("input").forEach((input) => { input.disabled = !selected; });
   }
+  document.querySelectorAll(`[data-regex-category]`).forEach((label) => {
+    const active = selected && label.dataset.regexCategory === category;
+    if (active || label.dataset.regexCategory === category) {
+      label.hidden = !active;
+      const input = label.querySelector("input");
+      if (input) input.disabled = !active;
+    }
+  });
 }
 
 function collectSearchConfig(form) {
   const data = Object.fromEntries(new FormData(form));
   data.domains = [...form.querySelectorAll('input[name="domains"]:checked')].map((input) => input.value);
-  const attachmentDiscovery = form.querySelector('input[name="attachment_discovery"]')?.checked === true;
-  if (!data.domains.length && !attachmentDiscovery) throw Error("Select at least one search domain.");
-  data.attachment_discovery = data.domains.includes("attachments") || attachmentDiscovery;
+  const attachmentDiscovery = data.domains.includes("attachments");
+  if (!data.domains.length) throw Error("Select at least one discovery section.");
+  data.attachment_discovery = attachmentDiscovery;
   data.categories = data.domains.includes("crypto") ? ["wallet", "seed", "wallet-file", "crypto-address", "gourl"] : [];
   data.category = data.categories.length === 7 ? "all" : (data.categories[0] || "all");
   data.category_regex = {};
   form.querySelectorAll(".category-regex").forEach((input) => {
     if (input.value.trim()) data.category_regex[input.dataset.category] = input.value.trim();
   });
+  if (data.contact_email_regex) data.category_regex.identity = data.contact_email_regex;
   const typeExtensions = new Set();
   form.querySelectorAll('input[name="attachment_type"]:checked').forEach((input) => {
     const groups = { documents: ["pdf","doc","docx","odt","rtf","txt","csv"], spreadsheets: ["xls","xlsx","ods","csv"], archives: ["zip","7z","rar","tar","gz","bz2"], images: ["jpg","jpeg","png","gif","tif","tiff","webp"], wallets: ["dat","wallet","key","json","backup","bak","db","sqlite"], email: ["eml","msg"] };
@@ -425,7 +433,6 @@ function collectSearchConfig(form) {
   });
   const custom = String(data.attachment_extensions || "").split(",").map((value) => value.trim()).filter(Boolean);
   data.attachment_extensions = [...typeExtensions, ...custom];
-  data.attachment_discovery = attachmentDiscovery;
   if (!data.attachment_discovery) {
     data.attachment_extensions = [];
     data.attachment_filename_regex = "";

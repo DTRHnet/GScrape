@@ -1392,6 +1392,8 @@ def authorize(
         "scope": "https://www.googleapis.com/auth/gmail.readonly",
         "access_type": "offline",
         "prompt": "consent",
+        "login_hint": getattr(args, "account_email", "") or "",
+        "include_granted_scopes": "true",
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
@@ -1449,6 +1451,15 @@ def authorize(
     if not refresh_token:
         raise RuntimeError("Google OAuth response did not contain a refresh token")
     set_dotenv_value(args.env_file, "GMAIL_REFRESH_TOKEN", refresh_token)
+    # Persist the verified mailbox identity alongside the token so each
+    # account-specific session remains independently auditable.
+    access_token = refresh_access_token(refresh_token, client_id, client_secret)
+    profile = get_profile(access_token)
+    expected = getattr(args, "account_email", "").strip().casefold()
+    actual = str(profile.get("emailAddress", "")).strip().casefold()
+    if expected and actual != expected:
+        raise RuntimeError("Google authorized a different Gmail account than the selected account")
+    set_dotenv_value(args.env_file, "GMAIL_ACCOUNT_EMAIL", str(profile.get("emailAddress", "")))
     return refresh_token
 
 
@@ -1533,7 +1544,12 @@ def search(args: argparse.Namespace, api_key: Optional[str], access_token: str) 
         else [(category, query) for category in categories for query in SEARCH_PASSES[category]]
     )
     if not query_passes and getattr(args, "attachment_discovery", False):
-        query_passes = [("attachment", "has:attachment")]
+        # Do not use Gmail's `has:attachment` search operator here.  Gmail
+        # search can omit messages whose attachment metadata is indexed
+        # differently (notably inline/renamed image attachments).  Listing the
+        # bounded historical mailbox and filtering attachment metadata locally
+        # is the reliable discovery path.
+        query_passes = [("attachment", "")]
     if getattr(args, "verbose", False):
         print(
             f"[search] categories={','.join(categories)} passes={len(query_passes)} "
@@ -1765,6 +1781,7 @@ def parse_args() -> argparse.Namespace:
         help="emit non-secret progress details to stderr",
     )
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
+    parser.add_argument("--account-email", default="", help="expected Gmail address for account-aware OAuth")
     parser.add_argument(
         "--authorize",
         action="store_true",

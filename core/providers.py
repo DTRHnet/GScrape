@@ -48,8 +48,30 @@ class GmailProvider:
         self.python_executable = python_executable or os.environ.get("GSCRAPE_PYTHON", "python3")
         self.allowed_root = Path(allowed_root or workdir).resolve()
 
+    @staticmethod
+    def _normalize_email(value: Any) -> str:
+        return str(value or "").strip().casefold()
+
+    def validate_session_identity(self, expected_email: str, profile: Mapping[str, Any]) -> None:
+        """Reject credentials that resolve to a different Gmail account."""
+        if self._normalize_email(profile.get("emailAddress")) != self._normalize_email(expected_email):
+            raise ValueError("Gmail session identity does not match the selected account")
+
+    def _verify_session_identity(self, env_file: Path, expected_email: str) -> None:
+        result = subprocess.run(
+            [self.python_executable, str(self.scanner_path), "--profile-check", "--env-file", str(env_file)],
+            cwd=self.workdir, text=True, capture_output=True, timeout=120,
+        )
+        if result.returncode:
+            raise ValueError("Gmail session profile verification failed")
+        try:
+            profile = json.loads(result.stdout)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Gmail session profile verification returned invalid data") from error
+        self.validate_session_identity(expected_email, profile)
+
     def _validate(self, config: Mapping[str, Any]) -> Dict[str, Any]:
-        allowed = {"account_id", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex"}
+        allowed = {"account_id", "expected_email", "env_file", "categories", "query", "after", "before", "max_messages", "run_id", "log_file", "progress_file", "attachment_extensions", "attachment_filename_regex"}
         unknown = set(config) - allowed
         if unknown:
             raise ValueError("unsupported Gmail job fields")
@@ -87,7 +109,7 @@ class GmailProvider:
         attachment_filename_regex = str(config.get("attachment_filename_regex", "")).strip()
         if attachment_filename_regex:
             re.compile(attachment_filename_regex, re.I)
-        return {"env_file": env_file, "categories": categories, "query": query,
+        return {"env_file": env_file, "expected_email": str(config.get("expected_email", "")), "categories": categories, "query": query,
                 "after": after, "before": before,
                 "max_messages": max_messages, "run_id": str(config.get("run_id", "")),
                 "log_file": Path(str(config.get("log_file", self.workdir / "email-wallet-search.log"))),
@@ -98,6 +120,9 @@ class GmailProvider:
 
     def execute(self, config: Dict[str, Any]) -> Dict[str, Any]:
         validated = self._validate(config)
+        if not validated["expected_email"]:
+            raise ValueError("selected Gmail account email is required")
+        self._verify_session_identity(validated["env_file"], validated["expected_email"])
         command = [self.python_executable, str(self.scanner_path), "--categories", ",".join(validated["categories"]),
                    "--after", validated["after"], "--before", validated["before"],
                    "--max-messages", str(validated["max_messages"]), "--env-file", str(validated["env_file"]),
