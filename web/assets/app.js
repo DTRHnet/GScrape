@@ -109,6 +109,13 @@ function attachmentCards(runId, match) {
   }).join("")}</div>`;
 }
 
+function findingRows(findings) {
+  return findings.map((match) => `<tbody class="finding-group">
+    <tr class="finding-images"><td colspan="5"><div class="finding-gallery">${attachmentCards("", match)}</div></td></tr>
+    <tr class="finding-meta"><td><span class="meta-label">Date</span>${esc(match.message_date || "Unknown")}</td><td><span class="meta-label">Sender</span><span class="wrap-cell">${esc(match.sender || "Unknown")}</span></td><td><span class="meta-label">Subject / content</span><span class="wrap-cell">${esc(match.subject || "(no subject)")}<div class="muted">${esc((match.categories || []).join(", "))}</div></span></td><td><span class="meta-label">Evidence</span>${esc(match.attachment_names?.length ? `${match.attachment_names.length} attachment(s)` : "Message match")}</td><td><a class="button ghost compact" target="_blank" rel="noopener" href="${esc(match.message_location || "#")}">Open Gmail</a></td></tr>
+  </tbody>`).join("");
+}
+
 function detailExpansion(run) {
   if (!state.detail?.run || state.detail.run.id !== run.id) return "";
   const detail = state.detail;
@@ -125,13 +132,7 @@ function detailExpansion(run) {
     </div>
     ${error}
     <div class="run-expansion-section"><div class="section-head"><div><strong>Findings</strong><span class="muted">Date, sender, subject, and acquired files</span></div><a class="button ghost compact" href="/api/export?format=run-report&run_id=${encodeURIComponent(run.id)}">Export</a></div>
-      ${findings.length ? `<div class="table-wrap mini-table"><table class="table findings-table"><thead><tr><th>Date</th><th>Sender</th><th>Subject</th><th>Attachments</th><th>Location</th></tr></thead><tbody>${findings.map((match) => `<tr>
-        <td>${esc(match.message_date || "")}</td>
-        <td class="wrap-cell">${esc(match.sender || "")}</td>
-        <td class="wrap-cell">${esc(match.subject || "")}<div class="muted">${esc((match.categories || []).join(", "))}</div></td>
-        <td>${attachmentCards(run.id, match)}</td>
-        <td><a class="button ghost compact" target="_blank" rel="noopener" href="${esc(match.message_location || "#")}">Open Gmail</a></td>
-      </tr>`).join("")}</tbody></table></div>` : '<div class="empty compact-empty">No categorized findings recorded yet.</div>'}
+      ${findings.length ? `<div class="table-wrap mini-table"><table class="table findings-table"><thead><tr><th colspan="5">Email evidence · thumbnails above, sortable metadata below</th></tr></thead>${findingRows(findings)}</table></div>` : '<div class="empty compact-empty">No categorized findings recorded yet.</div>'}
     </div>
     <p class="muted run-files">Result folder: <code>${esc(detail.files?.results_dir || "")}</code><br>Scan log: <code>${esc(detail.files?.scan_log || "")}</code>${detail.files?.acquired_dir ? `<br>Acquired files: <code>${esc(detail.files.acquired_dir)}</code>` : ""}</p>
   </div>`;
@@ -343,7 +344,7 @@ function render() {
       loadFullPageRun(fullPageRun);
       return;
     }
-    shell(`<div class="section-head page-heading"><div><p class="eyebrow section-kicker">FULL-PAGE RUN VIEW</p><h2>Run ${esc(fullPageRun)}</h2><p class="muted">Review this discovery run across the full page.</p></div><a class="button ghost" href="/">Back to dashboard</a></div><section class="card full-page-run">${detailExpansion(state.detail.run)}</section>`);
+    shell(`<div class="section-head page-heading full-page-heading"><div><p class="eyebrow section-kicker">FULL-PAGE RUN VIEW</p><h2>Run ${esc(fullPageRun)}</h2><p class="muted">Review email evidence with image-first rows and metadata below each message.</p></div><a class="button ghost" href="/">Back to dashboard</a></div><section class="full-page-run">${detailExpansion(state.detail.run)}</section>`);
     return;
   }
   $("#title").textContent = titles[state.view];

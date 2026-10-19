@@ -287,6 +287,10 @@ h3 { font-size: 14px; }
 .table tr:last-child td { border-bottom: 0; }
 .wrap-cell { white-space: normal; word-break: break-word; }
 .findings-table th, .findings-table td { white-space: normal; vertical-align: top; }
+.finding-group + .finding-group { border-top: 12px solid var(--bg); }
+.finding-images td { padding: 16px; background: color-mix(in srgb, var(--accent) 4%, var(--panel)); }
+.finding-meta td { width: 18%; min-width: 120px; }
+.meta-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .run-list { display: grid; gap: 10px; }
 .run-item {
   border: 1px solid var(--line);
@@ -355,6 +359,15 @@ h3 { font-size: 14px; }
 .run-expansion { max-height: 620px; overflow-y: auto; overscroll-behavior: contain; }
 .run-expansion-head { position: sticky; top: -1px; z-index: 2; background: var(--panel); }
 .run-expansion-head .actions { display: flex; gap: 8px; align-items: center; }
+.full-page-run { width: 100%; }
+.full-page-run .run-expansion { max-height: none; padding: 0; border: 0; background: transparent; box-shadow: none; overflow: visible; }
+.full-page-run .run-expansion-head { padding: 18px 0; }
+.full-page-run .run-expansion-section { width: 100%; }
+.full-page-run .finding-images td { width: 40%; }
+.full-page-run .attachment-gallery { width: 40%; min-width: 320px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.full-page-run .attachment-card { grid-template-columns: 96px minmax(0, 1fr); min-height: 112px; }
+.full-page-run .attachment-thumb { width: 96px; height: 96px; }
+.full-page-heading { margin-bottom: 8px; }
 .date-window .section-head { margin-bottom: 4px; }
 .date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
 .date-fields label { display: flex; flex-direction: column; gap: 6px; }
@@ -453,6 +466,10 @@ textarea { min-height: 100px; resize: vertical; }
   .run-row { grid-template-columns: auto minmax(0, 1fr); gap: 12px; }
   .run-actions { grid-column: 2; justify-content: flex-end; }
   .run-expansion { padding: 0 14px 16px 14px; }
+  .full-page-run .attachment-gallery { width: 100%; min-width: 0; }
+  .full-page-run .finding-images td { width: auto; }
+  .finding-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .finding-meta td { display: block; width: auto; }
   .run-metrics { grid-template-columns: repeat(2, 1fr); }
   .date-fields { grid-template-columns: 1fr; }
   .bulk-bar { bottom: 8px; }
