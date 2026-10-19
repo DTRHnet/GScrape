@@ -105,7 +105,7 @@ function attachmentCards(runId, match) {
     const download = item.download_url
       ? `<a class="button ghost compact" href="${esc(item.download_url)}" download>Download</a>`
       : "";
-    return `<article class="attachment-card">${thumb}<div class="attachment-info"><strong title="${label}">${label}</strong><div class="muted">${esc(meta)}</div><div class="row-actions">${download}${item.thumbnail_url ? `<a class="button ghost compact" href="${esc(item.thumbnail_url)}" target="_blank" rel="noopener">Expand</a>` : ""}</div></div></article>`;
+    return `<article class="attachment-card"><label class="attachment-select"><input type="checkbox" class="attachment-checkbox" data-attachment-url="${esc(item.download_url || "")}" aria-label="Select ${label}"><span class="checkmark"></span></label>${thumb}<div class="attachment-info"><strong title="${label}">${label}</strong><div class="muted">${esc(meta)}</div><div class="row-actions">${download}${item.thumbnail_url ? `<a class="button ghost compact" href="${esc(item.thumbnail_url)}" target="_blank" rel="noopener" title="Open image">↗ <span>Expand</span></a>` : ""}</div></div></article>`;
   }).join("")}</div>`;
 }
 
@@ -114,6 +114,20 @@ function findingRows(findings) {
     <tr class="finding-images"><td colspan="5"><div class="finding-gallery">${attachmentCards("", match)}</div></td></tr>
     <tr class="finding-meta"><td><span class="meta-label">Date</span>${esc(match.message_date || "Unknown")}</td><td><span class="meta-label">Sender</span><span class="wrap-cell">${esc(match.sender || "Unknown")}</span></td><td><span class="meta-label">Subject / content</span><span class="wrap-cell">${esc(match.subject || "(no subject)")}<div class="muted">${esc((match.categories || []).join(", "))}</div></span></td><td><span class="meta-label">Evidence</span>${esc(match.attachment_names?.length ? `${match.attachment_names.length} attachment(s)` : "Message match")}</td><td><a class="button ghost compact" target="_blank" rel="noopener" href="${esc(match.message_location || "#")}">Open Gmail</a></td></tr>
   </tbody>`).join("");
+}
+
+function selectedAttachmentUrls() {
+  return [...document.querySelectorAll(".attachment-checkbox:checked")].map((box) => box.dataset.attachmentUrl).filter(Boolean);
+}
+
+function downloadSelectedAttachments() {
+  const urls = selectedAttachmentUrls();
+  if (!urls.length) return;
+  urls.forEach((url, index) => setTimeout(() => { const link = document.createElement("a"); link.href = url; link.download = ""; document.body.appendChild(link); link.click(); link.remove(); }, index * 120));
+}
+
+function toggleAllAttachments(checked) {
+  document.querySelectorAll(".attachment-checkbox").forEach((box) => { box.checked = checked; });
 }
 
 function detailExpansion(run) {
@@ -131,7 +145,7 @@ function detailExpansion(run) {
       <div><span>Matches found</span><strong>${summary.total_matches ?? run.matches ?? 0}</strong></div>
     </div>
     ${error}
-    <div class="run-expansion-section"><div class="section-head"><div><strong>Findings</strong><span class="muted">Date, sender, subject, and acquired files</span></div><a class="button ghost compact" href="/api/export?format=run-report&run_id=${encodeURIComponent(run.id)}">Export</a></div>
+    <div class="run-expansion-section"><div class="section-head"><div><strong>Findings</strong><span class="muted">Date, sender, subject, and acquired files</span></div><div class="actions attachment-actions"><label class="select-all-control"><input type="checkbox" data-select-all-attachments onchange="toggleAllAttachments(this.checked)"><span>Select all</span></label><button class="button ghost compact" type="button" onclick="downloadSelectedAttachments()">↓ <span>Download selected</span></button><a class="button ghost compact" href="/api/export?format=run-report&run_id=${encodeURIComponent(run.id)}">Export</a></div></div>
       ${findings.length ? `<div class="table-wrap mini-table"><table class="table findings-table"><thead><tr><th colspan="5">Email evidence · thumbnails above, sortable metadata below</th></tr></thead>${findingRows(findings)}</table></div>` : '<div class="empty compact-empty">No categorized findings recorded yet.</div>'}
     </div>
     <p class="muted run-files">Result folder: <code>${esc(detail.files?.results_dir || "")}</code><br>Scan log: <code>${esc(detail.files?.scan_log || "")}</code>${detail.files?.acquired_dir ? `<br>Acquired files: <code>${esc(detail.files.acquired_dir)}</code>` : ""}</p>
