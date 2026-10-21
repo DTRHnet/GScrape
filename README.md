@@ -12,13 +12,13 @@
 > Take control of your email. Search it, understand it, and turn years of
 > messages into useful personal data — locally, privately, and on your terms.
 
-[![Release](https://img.shields.io/badge/release-v1.1.0-2ea44f?style=flat-square)](https://github.com/DTRHnet/GScrape/releases/tag/v1.1.0)
+[![Release](https://img.shields.io/badge/release-v1.2.0-2ea44f?style=flat-square)](https://github.com/DTRHnet/GScrape/releases/tag/v1.2.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Gmail API](https://img.shields.io/badge/API-Gmail%20readonly-ea4335?style=flat-square&logo=gmail&logoColor=white)](https://developers.google.com/gmail/api)
 [![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f?style=flat-square)](#testing)
 [![Security](https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square)](#security-and-data-handling)
 
-**Version:** `1.1.0` · **Status:** current release · **Deployment:** self-hosted
+**Version:** `1.2.0` · **Status:** current release · **Deployment:** self-hosted
 
 The local control plane exposes non-secret account health at `/api/core/health`,
 operational counters at `/api/core/metrics`, and configurable generated-result
@@ -141,7 +141,29 @@ model, no cloud inference, and no external data transfer.
 GScrape uses the Python standard library for its scanner and dashboard. A
 virtual environment is recommended.
 
-## Installation
+## Screenshots
+
+The dashboard is local-only and provides a browser-based review surface for
+accounts, scans, findings, and operational status.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-overview.png" alt="GScrape local dashboard overview" width="860">
+  <br>
+  <sub>Local dashboard overview with scan controls and account status panels.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-settings.png" alt="GScrape dashboard settings" width="860">
+  <br>
+  <sub>Settings view for configuring an authorized local account and scan behavior.</sub>
+</p>
+
+## Setup
+
+Follow these steps on the machine that will access the authorized mailbox. Keep
+the project directory private and do not expose the dashboard to the internet.
+
+### 1. Clone the repository and create an environment
 
 ```bash
 git clone https://github.com/DTRHnet/GScrape.git
@@ -149,6 +171,76 @@ cd GScrape
 python3 -m venv .venv
 source .venv/bin/activate
 cp .env.example .env
+```
+
+### 2. Install dependencies
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+### 3. Configure Google Cloud and OAuth
+
+1. Create or select an authorized Google Cloud project.
+2. Enable the Gmail API for that project.
+3. Configure an OAuth client for a local web application.
+4. Register the exact redirect URI from `.env`, normally
+   `http://127.0.0.1:8765/`.
+5. Copy the client values into `.env`.
+6. Keep the Gmail scope read-only:
+   `https://www.googleapis.com/auth/gmail.readonly`.
+
+Never paste tokens, client secrets, mailbox contents, or wallet material into
+issues, logs, screenshots, or source control. `GOOGLE_API_KEY` alone does not
+authorize access to private Gmail messages.
+
+### 4. Authorize the local account
+
+```bash
+python gscrape.py --authorize --env-file .env
+```
+
+Complete the Google consent flow in the existing local browser session. If
+Google requests account selection, MFA, or additional consent, complete that
+step yourself; GScrape does not bypass provider protections.
+
+### 5. Start the dashboard
+
+```bash
+python dashboard_server.py
+```
+
+Open `http://127.0.0.1:8766/` in the same machine's browser. Add or connect an
+account from **Settings**, then use the search view to configure a bounded scan.
+Keep the terminal running while using the dashboard.
+
+### 6. Run a first historical scan
+
+For the project's historical crypto-evidence workflow, use explicit inclusive
+date bounds and a conservative message limit:
+
+```bash
+python gscrape.py \
+  --categories gourl,wallet,seed,wallet-file,crypto-address,identity,phone \
+  --after 2013/01/01 \
+  --before 2018/12/31 \
+  --max-messages 1000 \
+  --env-file .env \
+  --log-file email-wallet-search.log \
+  --verbose
+```
+
+Review the redacted findings and audit log. Discovery does not authorize
+downloading attachments or attempting wallet recovery.
+
+### 7. Run offline reports and tests
+
+```bash
+python gscrape.py --report-only --report --log-file email-wallet-search.log
+python -m py_compile gscrape.py dashboard_server.py test_search_gmail_patterns.py
+python -m unittest discover -v
+git diff --check
 ```
 
 Edit `.env` only on the local authorized system. Never commit `.env`, OAuth
@@ -175,7 +267,8 @@ authorized OAuth credential.
 python gscrape.py --help
 ```
 
-Run a focused historical search:
+Dates are unrestricted by default. Run a focused historical search only when you
+provide explicit bounds:
 
 ```bash
 python gscrape.py \
@@ -187,6 +280,8 @@ python gscrape.py \
   --log-file email-wallet-search.log \
   --verbose
 ```
+
+Omit `--after` and `--before` (or use `--no-date-filter`) to search all dates.
 
 Run one category only:
 
@@ -205,6 +300,23 @@ Generate a report or export existing redacted records without contacting Gmail:
 python gscrape.py --report-only --report --log-file email-wallet-search.log
 python gscrape.py --report-only --export-csv results/matches.csv
 ```
+
+Reports exclude suppressed promotional/bulk candidates by default and include
+classification, suppression reasons, relevance scores, category counts, and
+high-confidence category totals. Optional category analysis can send only this
+redacted metadata (never message bodies, secrets, or attachment bytes) to an
+OpenAI-compatible endpoint:
+
+```bash
+OPENAI_API_KEY=... python gscrape.py --report-only \
+  --log-file email-wallet-search.log \
+  --analyze-category wallet \
+  --llm-output results/wallet-analysis.md
+```
+
+Set `LLM_API_BASE` and `LLM_MODEL` for another compatible provider. LLM output is
+advisory analysis: it does not establish ownership, authenticity, or recovery
+success.
 
 ## Rate limiting and quota handling
 
@@ -343,19 +455,9 @@ git diff --check
 Tests use synthetic text and metadata. Do not run a live mailbox scan as a
 substitute for the unit suite.
 
-## Versioning and releases
+## Credits
 
-GScrape follows [Semantic Versioning 2.0.0](https://semver.org/):
-
-- **MAJOR** — incompatible behavior or workflow changes
-- **MINOR** — backward-compatible features
-- **PATCH** — backward-compatible fixes and documentation changes
-
-The current release is **v1.0.0**, the stable foundation for the broader
-self-hosted email parsing vision. It contains focused filter coverage, redacted
-audit workflows, local dashboard controls, and adaptive Gmail API rate limiting;
-presets, advanced rule configuration, provider expansion, and optional LLM
-analysis are the direction of future releases.
+GScrape is maintained by KBS — <admin@dtrh.net>.
 
 ## Contributing
 

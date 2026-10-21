@@ -1,6 +1,16 @@
 # Changelog
 
-All notable changes are documented here. Versions follow semantic versioning.
+All notable changes are documented here.
+
+## [1.2.0] - 2026-10-21
+
+### Changed
+
+- Prepared the repository for public release with expanded privacy-focused
+  ignore rules and removal of local-only operator artifacts from the workspace.
+- Added step-by-step setup, OAuth, dashboard, scanning, testing, and security
+  guidance to the README.
+- Added centered dashboard screenshots and maintainer credits to the README.
 
 ## [1.1.0] - 2026-10-19
 

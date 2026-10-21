@@ -27,6 +27,11 @@ PROMOTION_MARKERS = re.compile(
     r"limited[- ]time offer|bonus|referral|airdrop|presale|weekly market update|"
     r"trade more|promo(?:tion| code)?|sponsored)\b"
 )
+HARD_BULK_MARKERS = re.compile(
+    r"(?i)\b(?:unsubscribe|manage preferences|view in browser|newsletter|marketing|"
+    r"sponsored|advertisement|advertising|casino|bonus code|refer a friend|"
+    r"buy now|limited[- ]time offer|airdrop|presale|promo(?:tion| code)?)\b"
+)
 STRONG_MARKERS = re.compile(
     r"(?i)\b(?:wallet\.dat|keystore(?:\.json)?|seed phrase|recovery phrase|"
     r"mnemonic|private key|secret key|backup|restore|export|import|recover|"
@@ -127,6 +132,7 @@ def assess_relevance(record: Mapping[str, Any]) -> RelevanceAssessment:
     score = 0
     reasons: list[str] = []
     promotional = bool(PROMOTION_MARKERS.search(combined))
+    hard_bulk = bool(HARD_BULK_MARKERS.search(combined))
     strong = bool(STRONG_MARKERS.search(combined))
     transactional = bool(TRANSACTIONAL_MARKERS.search(combined))
     if strong:
@@ -144,13 +150,16 @@ def assess_relevance(record: Mapping[str, Any]) -> RelevanceAssessment:
     if promotional:
         score -= 7
         reasons.append("promotional_or_bulk_signal")
+    if hard_bulk:
+        score -= 4
+        reasons.append("advertisement_or_bulk_language")
     if strong and promotional:
         return RelevanceAssessment(score, "strong_candidate", False, tuple(reasons))
     if score >= 8:
         return RelevanceAssessment(score, "high", False, tuple(reasons))
     if score >= 3:
         return RelevanceAssessment(score, "medium", False, tuple(reasons))
-    if promotional:
+    if promotional or hard_bulk:
         return RelevanceAssessment(score, "promotional", True, tuple(reasons))
     return RelevanceAssessment(score, "low", False, tuple(reasons))
 

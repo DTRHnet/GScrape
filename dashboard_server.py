@@ -52,8 +52,6 @@ LOG_DIR = ROOT / "logs"
 LOG_CONFIG_PATH = LOG_DIR / "logging.json"
 RESULTS_DIR = ROOT / "results"
 ACQUIRED_DIR = ROOT / "acquired-attachments"
-DEFAULT_AFTER_DATE = "2013/01/01"
-DEFAULT_BEFORE_DATE = "2018/12/31"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff", ".bmp"}
 DEFAULT_LOG_CONFIG = {"level": "INFO", "max_bytes": 5 * 1024 * 1024, "backup_count": 5}
 METRICS = {"jobs_created": 0, "jobs_completed": 0, "jobs_failed": 0, "jobs_cancelled": 0}
@@ -1209,8 +1207,37 @@ def run_scan(run_id, config):
     records = load_run_records(run_id)
     persist_progress_records(run_id, records)
     write_run_artifacts(run_id, row, records, row["status"], row["error"])
+    if row["status"] == "completed":
+        generate_configured_llm_report(run_id, records)
     connection.close()
     LOGGER.info("scan finished: %s (%s)", run_id, status if "status" in locals() else "failed")
+
+
+def generate_configured_llm_report(run_id, records):
+    """Generate a local report from redacted metadata when explicitly enabled."""
+    if os.environ.get("GSCRAPE_LLM_ENABLED", "").lower() not in {"1", "true", "yes", "on"}:
+        return None
+    endpoint = os.environ.get("LLM_API_BASE", "https://api.openai.com/v1")
+    model = os.environ.get("LLM_MODEL", "gpt-5.6-luna")
+    api_key = os.environ.get(os.environ.get("LLM_API_KEY_ENV", "OPENAI_API_KEY"), "")
+    if not api_key:
+        LOGGER.warning("LLM report skipped for %s: configured API key environment variable is empty", run_id)
+        return None
+    payload = gscrape.build_llm_analysis_payload(records, "all")
+    try:
+        analysis = gscrape.analyze_with_llm(payload, endpoint, api_key, model)
+        output_dir = ROOT / os.environ.get("LLM_OUTPUT_DIR", "llm-reports")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{run_id}.md"
+        output_path.write_text(
+            f"# LLM analysis for run {run_id}\n\n{analysis.strip()}\n",
+            encoding="utf-8",
+        )
+        LOGGER.info("LLM report written for %s", run_id)
+        return output_path
+    except (OSError, RuntimeError, ValueError) as error:
+        LOGGER.warning("LLM report failed for %s: %s", run_id, error)
+        return None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1263,7 +1290,7 @@ class Handler(BaseHTTPRequestHandler):
                     "scanner": SCANNER.name,
                     "local_only": True,
                     "database": str(DB_PATH.name),
-                    "version": "1.1.0",
+                    "version": "1.2.0",
                 })
             if parsed.path == "/api/profiles":
                 return json_response(self, {"profiles": list_rows("profiles")})

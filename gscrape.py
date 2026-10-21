@@ -31,6 +31,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from core.artifacts import assess_relevance
+
 
 API_ROOT = "https://gmail.googleapis.com/gmail/v1/users"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -1057,8 +1059,39 @@ def load_match_records(log_path: Path) -> List[Dict[str, Any]]:
                 continue
             obj = safe_json_loads(line)
             if isinstance(obj, dict) and obj.get("event") == "gmail-crypto-discovery-match":
+                assessment = assess_relevance(obj)
+                if obj.get("suppressed") is True:
+                    assessment = assessment.__class__(
+                        assessment.score, assessment.classification, True, assessment.reasons
+                    )
+                obj["relevance_classification"] = assessment.classification
+                obj["relevance_reasons"] = list(assessment.reasons)
+                obj["relevance_score"] = max(
+                    int(obj.get("relevance_score", 0) or 0), assessment.score
+                )
+                obj["suppressed"] = assessment.suppressed
                 records.append(obj)
-    return records
+    return sort_match_records(records)
+
+
+def sort_match_records(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return deterministic best-first findings ordering.
+
+    Non-suppressed high-confidence evidence comes first, followed by score,
+    category count, date, and stable subject/location tie-breakers.
+    """
+    def key(record: Dict[str, Any]):
+        score = float(record.get("relevance_score", 0) or 0)
+        categories = record.get("categories") or []
+        return (
+            bool(record.get("suppressed")),
+            -score,
+            -len(categories),
+            str(record.get("message_date", "")),
+            str(record.get("subject", "")).lower(),
+            str(record.get("message_location", "")),
+        )
+    return sorted((dict(record) for record in records), key=key)
 
 
 def load_audit_records(log_path: Path) -> List[Dict[str, Any]]:
@@ -1077,6 +1110,8 @@ def load_audit_records(log_path: Path) -> List[Dict[str, Any]]:
 def summarize_matches(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """Produce a high-level statistical summary of a list of match records.
 
+    records = sort_match_records(records)
+
     Returns a dict containing:
       - total_matches
       - category_counts (Counter)
@@ -1093,6 +1128,9 @@ def summarize_matches(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             "date_range": None,
             "high_score_count": 0,
             "unique_message_ids": 0,
+            "suppressed_promotional_count": 0,
+            "classification_counts": {},
+            "high_confidence_categories": {},
         }
 
     cat_counter: Counter = Counter()
@@ -1100,10 +1138,20 @@ def summarize_matches(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     dates: List[datetime] = []
     high_score = 0
     ids: Set[str] = set()
+    suppressed = 0
+    classifications: Counter = Counter()
+    strong_categories: Counter = Counter()
 
     for rec in records:
         cats = rec.get("categories") or []
-        cat_counter.update(cats)
+        if rec.get("suppressed"):
+            suppressed += 1
+        else:
+            cat_counter.update(cats)
+        classification = str(rec.get("relevance_classification") or "unknown")
+        classifications[classification] += 1
+        if not rec.get("suppressed") and float(rec.get("relevance_score", 0) or 0) >= 12:
+            strong_categories.update(cats)
         sender = (rec.get("sender") or "").strip()
         if sender:
             sender_counter[sender] += 1
@@ -1134,6 +1182,9 @@ def summarize_matches(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "date_range": date_range,
         "high_score_count": high_score,
         "unique_message_ids": len(ids) or len(records),
+        "suppressed_promotional_count": suppressed,
+        "classification_counts": dict(classifications.most_common()),
+        "high_confidence_categories": dict(strong_categories.most_common()),
     }
 
 
@@ -1146,12 +1197,17 @@ def print_summary_report(summary: Dict[str, Any], title: str = "Match Summary") 
     print(f"Total matches          : {summary.get('total_matches', 0)}")
     print(f"Unique message IDs     : {summary.get('unique_message_ids', 0)}")
     print(f"High-score matches     : {summary.get('high_score_count', 0)}")
+    print(f"Suppressed promotions  : {summary.get('suppressed_promotional_count', 0)}")
     dr = summary.get("date_range")
     if dr:
         print(f"Date range             : {dr['earliest']} → {dr['latest']}")
     print("\nCategory breakdown:")
     for cat, count in (summary.get("category_counts") or {}).items():
         print(f"  {cat:18s} {count}")
+    if summary.get("high_confidence_categories"):
+        print("\nHigh-confidence categories:")
+        for cat, count in summary["high_confidence_categories"].items():
+            print(f"  {cat:18s} {count}")
     print("\nTop senders:")
     for sender, count in (summary.get("top_senders") or [])[:10]:
         print(f"  {count:3d}  {sender[:80]}")
@@ -1212,6 +1268,61 @@ def export_matches_json(records: Sequence[Dict[str, Any]], json_path: Path, pret
     return len(enriched)
 
 
+def build_llm_analysis_payload(records: Sequence[Dict[str, Any]], category: str = "all") -> Dict[str, Any]:
+    """Build a deliberately redacted, bounded payload for optional analysis.
+
+    No message bodies, recovery material, attachment bytes, access tokens, or
+    credentials are included. The payload is suitable for a user-selected LLM.
+    """
+    selected = [
+        record for record in records
+        if category == "all" or category in (record.get("categories") or [])
+    ]
+    selected = [record for record in selected if not record.get("suppressed")]
+    items = []
+    for record in selected[:200]:
+        items.append({
+            "date": record.get("message_date", ""),
+            "sender": record.get("sender", ""),
+            "subject": record.get("subject", ""),
+            "categories": record.get("categories", []),
+            "score": record.get("relevance_score", 0),
+            "attachment_names": record.get("attachment_names", []),
+            "evidence_reasons": record.get("relevance_reasons", []),
+        })
+    summary = summarize_matches(selected)
+    return {"category": category, "summary": summary, "records": items}
+
+
+def analyze_with_llm(payload: Dict[str, Any], endpoint: str, api_key: str, model: str) -> str:
+    """Call an OpenAI-compatible endpoint without logging credentials or content."""
+    if not endpoint or not api_key:
+        raise ValueError("LLM endpoint and API key are required")
+    body = json.dumps({
+        "model": model,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": "Analyze redacted email metadata. Do not infer ownership or recovery success. Return concise conclusions, evidence, uncertainty, and recommended review steps."},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint.rstrip("/") + "/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("LLM request failed without exposing response details") from error
+    try:
+        return str(result["choices"][0]["message"]["content"])
+    except (KeyError, IndexError, TypeError) as error:
+        raise RuntimeError("LLM response did not contain analysis text") from error
+
+
 def public_acquired_attachment(item: Dict[str, Any], run_id: str = "") -> Dict[str, Any]:
     """Return non-secret metadata for one acquired attachment."""
     allowed = ("filename", "stored_name", "size_bytes", "sha256", "status")
@@ -1231,6 +1342,7 @@ def public_match_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "sender", "subject", "categories", "matched_search_passes",
         "attachment_names", "relevance_score", "wallet_files",
         "recovery_phrases", "suspect_signals", "has_high_confidence_suspects",
+        "relevance_classification", "relevance_reasons", "suppressed",
     )
     result = {field: record[field] for field in fields if field in record}
     result["relevance_score"] = record.get(
@@ -1922,6 +2034,16 @@ def parse_args() -> argparse.Namespace:
         help="report/export existing log records without contacting Gmail",
     )
     parser.add_argument(
+        "--analyze-category",
+        metavar="CATEGORY",
+        help="optionally analyze redacted report records with an OpenAI-compatible LLM",
+    )
+    parser.add_argument(
+        "--llm-output",
+        type=Path,
+        help="write optional LLM analysis to this file instead of stdout",
+    )
+    parser.add_argument(
         "--profile-check",
         action="store_true",
         help="fetch and print the Gmail profile (email, message counts) then exit",
@@ -1977,8 +2099,8 @@ def main() -> None:
 
     # Offline reporting/export must not require credentials or contact Gmail.
     if args.report_only:
-        if not (args.report or args.export_csv or args.export_json):
-            raise SystemExit("--report-only requires --report, --export-csv, or --export-json")
+        if not (args.report or args.export_csv or args.export_json or args.analyze_category):
+            raise SystemExit("--report-only requires --report, --export-csv, --export-json, or --analyze-category")
         records = load_match_records(args.log_file)
         if args.report:
             summary = summarize_matches(records)
@@ -1986,6 +2108,21 @@ def main() -> None:
         if args.export_csv:
             n = export_matches_csv(records, args.export_csv)
             print(f"Exported {n} matches to {args.export_csv}")
+        if args.analyze_category:
+            category = args.analyze_category
+            if category != "all" and category not in CATEGORY_NAMES:
+                raise SystemExit(f"unsupported analysis category: {category}")
+            dotenv = load_dotenv(args.env_file)
+            endpoint = resolve_config_value("LLM_API_BASE", dotenv) or "https://api.openai.com/v1"
+            api_key = resolve_config_value("OPENAI_API_KEY", dotenv)
+            model = resolve_config_value("LLM_MODEL", dotenv) or "gpt-4o-mini"
+            if not api_key:
+                raise SystemExit("OPENAI_API_KEY is required for --analyze-category")
+            analysis = analyze_with_llm(build_llm_analysis_payload(records, category), endpoint, api_key, model)
+            if args.llm_output:
+                args.llm_output.write_text(analysis + "\n", encoding="utf-8")
+            else:
+                print(analysis)
         if args.export_json:
             n = export_matches_json(records, args.export_json)
             print(f"Exported {n} matches to {args.export_json}")

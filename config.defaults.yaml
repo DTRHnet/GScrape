@@ -35,3 +35,19 @@ report_only: false
 profile_check: false
 list_labels: false
 suggest_queries: null
+sort_findings: relevance
+promotional_suppression: true
+promotional_suppression_threshold: 0
+secret_evidence:
+  enabled: true
+  capture_mode: metadata-only
+  encrypted_output_dir: protected-artifacts
+  allow_local_review: true
+llm:
+  enabled: false
+  provider: openai-compatible
+  api_base: https://api.openai.com/v1
+  model: gpt-5.6-luna
+  api_key_env: OPENAI_API_KEY
+  include_secret_values: false
+  output_dir: llm-reports

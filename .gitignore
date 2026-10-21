@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+credentials/
+*.json
 sessions/
 *.token
 *.tokens
@@ -20,7 +22,9 @@ token*.json
 *.old
 *.aes
 *.sqlite
+*.sqlite3
 *.db
+*.session
 *.gpg
 *.asc
 wallet-recovery-attempts.txt
@@ -31,12 +35,25 @@ bitcoin-wallet-backup-*
 email-wallet-search.log
 email-wallet-*.log
 email-wallet-*-summary*.md
+*.log
 results/
 acquired-attachments/
 logs/
 dashboard.db
 PROGRESS.jsonl
 runtime/
+protected-artifacts/
+llm-reports/
+*.jsonl
+*.tmp
+*.cache
+
+# Local operator notes and agent/runtime directives
+AGENTS.md
+PROGRESS_MEMORY.md
+.agents/
+.codex/
+.aws/
 
 # Python and editor/build artifacts
 .venv/
@@ -55,6 +72,8 @@ htmlcov/
 .DS_Store
 Thumbs.db
 *.png
+!docs/screenshots/
+!docs/screenshots/*.png
 *.swp
 *.swo
 *~

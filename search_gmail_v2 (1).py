@@ -1377,9 +1377,9 @@ def parse_args() -> argparse.Namespace:
         choices=["all", *sorted(CATEGORY_PATTERNS)],
         default="all",
     )
-    parser.add_argument("--after", default="2012/12/31", help="Gmail after: date; default includes 2013 onward")
-    parser.add_argument("--before", default="2019/01/01", help="Gmail before: date; default includes through 2018")
-    parser.add_argument("--no-date-filter", action="store_true", help="search outside the default 2013-2018 window")
+    parser.add_argument("--after", default="", help="Optional Gmail after: date; omitted by default")
+    parser.add_argument("--before", default="", help="Optional Gmail before: date; omitted by default")
+    parser.add_argument("--no-date-filter", action="store_true", help="disable any supplied date filters")
     parser.add_argument("--retries", type=int, default=4, help="transient API retry count")
     parser.add_argument("--user", default="me", help="Gmail user resource, usually me")
     parser.add_argument("--profile-index", default="0")
