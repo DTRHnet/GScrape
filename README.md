@@ -221,47 +221,184 @@ and browser session as part of the security boundary.
 
 ## Environment variables
 
-`.env.example` is a commented template. Copy it to `.env`, then fill in only
-the values needed for the workflow you intend to run. Values in `.env` are
-loaded locally; they are never meant to be committed. The CLI also accepts
-`--env-file PATH` for a separate account/session file. A direct OAuth access
-token can run a scan until it expires; a refresh token requires the matching
-Google client ID and client secret and is better suited to repeatable scans.
+`.env.example` contains the complete variable-by-variable instructions. Copy it
+to `.env`, then fill in only the values needed for the workflow you intend to
+run. It identifies which settings are mandatory or optional, explains accepted
+values and defaults, and describes the security boundary for each value. The
+CLI also accepts `--env-file PATH` for a separate account/session file.
 
-The table below shows the practical dependency of each variable. `✅` means the
-variable is used for that capability, `◐` means it is optional or conditional,
-`❌` means the capability is unavailable when that value is missing, and `—`
-means the variable does not participate in that workflow. Defaults are shown in
-the final column, so an unset optional variable is not automatically an error.
+The applicable account, authorization, search, retention, and LLM settings can
+also be changed from the local dashboard. Keep `.env` and dashboard state on
+the authorized local machine; never commit tokens, client secrets, API keys,
+mailbox contents, wallet material, or recovery output.
 
-| Environment variable | Dashboard account connection | `--authorize` | Gmail scan | LLM analysis | If unset |
-| --- | :---: | :---: | :---: | :---: | --- |
-| `GOOGLE_CLIENT_ID` | ✅ | ✅ | ◐ | — | ❌ OAuth connection/refresh cannot use the account |
-| `GOOGLE_CLIENT_SECRET` | ✅ | ✅ | ◐ | — | ❌ Authorization and refresh-token scans fail |
-| `GMAIL_REFRESH_TOKEN` | ◐ | — | ✅ | — | ❌ Refresh-token scans need an access token instead |
-| `GMAIL_ACCESS_TOKEN` | — | — | ✅ | — | ❌ Direct-token scans need a refresh flow instead |
-| `GOOGLE_API_KEY` | — | — | ◐ | — | No project-key hint; ❌ it never authorizes Gmail by itself |
-| `GOOGLE_REDIRECT_URI` | ✅ | ✅ | ◐ | — | Uses the local callback default |
-| `OPENAI_API_KEY` | — | — | — | ✅ | ❌ LLM analysis is skipped or rejected |
-| `LLM_API_BASE` | — | — | — | ✅ | Uses `https://api.openai.com/v1` |
-| `LLM_MODEL` | — | — | — | ✅ | Uses the configured code/CLI fallback model |
-| `GSCRAPE_LLM_ENABLED` | ◐ | — | — | ✅ | ❌ Automatic dashboard reports stay disabled |
-| `LLM_API_KEY_ENV` | — | — | — | ✅ | Reads `OPENAI_API_KEY` |
-| `LLM_OUTPUT_DIR` | — | — | — | ✅ | Writes to `llm-reports/` |
-| `GSCRAPE_RETENTION_DAYS` | ✅ | — | — | — | Retains generated results for 30 days |
-| `GSCRAPE_SORT_FINDINGS` | — | — | — | — | No direct runtime override; use explicit sort controls |
-| `GSCRAPE_SECRET_EVIDENCE_ENABLED` | — | — | — | — | No direct runtime override; fail-closed policy remains |
-| `GSCRAPE_CAPTURE_MODE` | — | — | — | — | No direct `.env` override; metadata-only remains safe default |
-| `GSCRAPE_ENCRYPTED_OUTPUT_DIR` | — | — | — | — | No direct `.env` override; protected-artifact default remains |
+The current template is reproduced below for quick reference:
 
-For `GSCRAPE_CAPTURE_MODE`, the accepted policy names are `metadata-only`,
-`capture-selected`, and `capture-high-confidence`. The current Gmail provider
-supports `metadata-only` and deliberately rejects capture modes unless an
-approved encrypted backend is enabled. This prevents a setting in `.env` from
-silently causing plaintext wallet or attachment capture. Likewise, the final
-four policy variables are documented configuration names but are not standalone
-runtime switches in the current build; the explicit CLI/dashboard controls and
-provider validation remain authoritative.
+```dotenv
+# ============================================================================
+# GScrape local environment template
+# Copy this file to .env. Keep .env private.
+# Never commit credentials, tokens, API keys, mailbox data, wallet material,
+# or recovery output.
+# ============================================================================
+
+# GOOGLE_CLIENT_ID
+# STATUS  : Mandatory for authorization; optional for direct-token scans
+# FUNCTION: Identifies the OAuth client registered in Google Cloud Console.
+# SUMMARY : Usually ends in .apps.googleusercontent.com; not a mailbox credential.
+# VALUES  : <client-id> - OAuth client ID from Google Cloud
+#           <empty>     - Use only with an already-issued access token
+# ----------------------------------------------------------------------------
+GOOGLE_CLIENT_ID=
+
+# GOOGLE_CLIENT_SECRET
+# STATUS  : Mandatory for authorization and token refresh; optional for direct-token scans
+# FUNCTION: Pairs with GOOGLE_CLIENT_ID during OAuth and token exchange.
+# SUMMARY : Treat as a secret; never place it in logs, screenshots, or source control.
+# VALUES  : <client-secret> - Secret paired with GOOGLE_CLIENT_ID
+#           <empty>         - Use only with an already-issued access token
+# ----------------------------------------------------------------------------
+GOOGLE_CLIENT_SECRET=
+
+# GMAIL_REFRESH_TOKEN
+# STATUS  : Optional; required for repeatable refresh-based scans
+# FUNCTION: Long-lived OAuth credential for the authorized Gmail account.
+# SUMMARY : Create with --authorize; this is not an API key or account password.
+# VALUES  : <refresh-token> - OAuth refresh token for the authorized account
+#           <empty>         - Use GMAIL_ACCESS_TOKEN or run --authorize first
+# ----------------------------------------------------------------------------
+GMAIL_REFRESH_TOKEN=
+
+# GMAIL_ACCESS_TOKEN
+# STATUS  : Optional; required for a direct-token scan
+# FUNCTION: Short-lived OAuth bearer token used to call the Gmail API.
+# SUMMARY : Expires. Do not use a value beginning with AIza; that is an API key.
+# VALUES  : <access-token> - Short-lived OAuth bearer token
+#           <empty>        - Use GMAIL_REFRESH_TOKEN with the client values
+# ----------------------------------------------------------------------------
+GMAIL_ACCESS_TOKEN=
+
+# GOOGLE_API_KEY
+# STATUS  : Optional; never sufficient for private Gmail access
+# FUNCTION: Identifies a Google API project for compatible requests.
+# SUMMARY : Does not authorize access to private Gmail messages.
+# VALUES  : <api-key> - Google API project key
+#           <empty>   - Normal for OAuth-only local use
+# ----------------------------------------------------------------------------
+GOOGLE_API_KEY=
+
+# GOOGLE_REDIRECT_URI
+# STATUS  : Mandatory for authorization; optional when using the application default
+# FUNCTION: Defines the local OAuth callback registered in Google Cloud.
+# SUMMARY : Path, port, and trailing slash must match the registered URI exactly.
+# VALUES  : <local-uri> - For example http://127.0.0.1:8765/
+#           <empty>     - Use the application callback default
+# ----------------------------------------------------------------------------
+GOOGLE_REDIRECT_URI=http://127.0.0.1:8765/
+
+# OPENAI_API_KEY
+# STATUS  : Optional; required only for LLM analysis
+# FUNCTION: Authenticates an OpenAI-compatible analysis provider.
+# SUMMARY : Only redacted report metadata may be sent; never send secrets or bytes.
+# VALUES  : <provider-key> - Key accepted by LLM_API_BASE
+#           <empty>        - LLM analysis is unavailable; searches still work
+# ----------------------------------------------------------------------------
+OPENAI_API_KEY=
+
+# LLM_API_BASE
+# STATUS  : Optional; used only for LLM analysis
+# FUNCTION: Selects the OpenAI-compatible chat-completions endpoint.
+# SUMMARY : Use an approved HTTPS endpoint, commonly ending in /v1.
+# VALUES  : <url>   - For example https://api.openai.com/v1
+#           <empty> - Use https://api.openai.com/v1
+# ----------------------------------------------------------------------------
+LLM_API_BASE=https://api.openai.com/v1
+
+# LLM_MODEL
+# STATUS  : Optional; used only for LLM analysis
+# FUNCTION: Selects the model identifier accepted by the LLM provider.
+# SUMMARY : The model must be available at LLM_API_BASE.
+# VALUES  : <model-name> - For example gpt-4o-mini
+#           <empty>      - Use the configured CLI/dashboard fallback
+# ----------------------------------------------------------------------------
+LLM_MODEL=gpt-4o-mini
+
+# GSCRAPE_LLM_ENABLED
+# STATUS  : Optional; disabled by default
+# FUNCTION: Enables automatic LLM reports after completed dashboard runs.
+# SUMMARY : Does not affect deterministic searches or explicit --analyze-category.
+# VALUES  : true/1/yes/on     - Enable automatic reports
+#           false/0/no/off     - Disable automatic reports
+#           <empty>            - Disable automatic reports
+# ----------------------------------------------------------------------------
+GSCRAPE_LLM_ENABLED=false
+
+# LLM_API_KEY_ENV
+# STATUS  : Optional; defaults to OPENAI_API_KEY
+# FUNCTION: Names the environment variable containing the LLM API key.
+# SUMMARY : Put the variable name here, never the secret value itself.
+# VALUES  : <variable-name> - For example OPENAI_API_KEY
+#           <empty>         - Read OPENAI_API_KEY
+# ----------------------------------------------------------------------------
+LLM_API_KEY_ENV=OPENAI_API_KEY
+
+# LLM_OUTPUT_DIR
+# STATUS  : Optional; defaults to llm-reports/
+# FUNCTION: Selects the destination for automatic dashboard LLM reports.
+# SUMMARY : Relative paths use the repository root; absolute paths are literal.
+# VALUES  : <path>  - For example llm-reports or /secure/reports
+#           <empty> - Use llm-reports/
+# ----------------------------------------------------------------------------
+LLM_OUTPUT_DIR=llm-reports
+
+# GSCRAPE_RETENTION_DAYS
+# STATUS  : Optional; defaults to 30 days
+# FUNCTION: Sets how many whole days generated dashboard results are retained.
+# SUMMARY : Use a non-negative integer.
+# VALUES  : <integer> - For example 30, 7, or 0
+#           <empty>   - Retain results for 30 days
+# ----------------------------------------------------------------------------
+GSCRAPE_RETENTION_DAYS=30
+
+# GSCRAPE_SORT_FINDINGS
+# STATUS  : Optional; configuration compatibility setting
+# FUNCTION: Names the preferred finding sort order where configuration supports it.
+# SUMMARY : Use dashboard or CLI sort controls when available.
+# VALUES  : relevance - Prioritize explainable evidence score
+#           <empty>   - Use the application default
+# ----------------------------------------------------------------------------
+GSCRAPE_SORT_FINDINGS=relevance
+
+# GSCRAPE_SECRET_EVIDENCE_ENABLED
+# STATUS  : Optional; fail-closed default
+# FUNCTION: Controls the sensitive-evidence policy where supported.
+# SUMMARY : Does not authorize capture or review of secrets.
+# VALUES  : true  - Keep the sensitive-evidence policy enabled
+#           false - Disable the policy where supported
+# ----------------------------------------------------------------------------
+GSCRAPE_SECRET_EVIDENCE_ENABLED=true
+
+# GSCRAPE_CAPTURE_MODE
+# STATUS  : Optional; metadata-only default
+# FUNCTION: Selects the protected-artifact handling policy.
+# SUMMARY : The current Gmail provider accepts metadata-only and rejects capture
+#           modes unless an approved encrypted backend is enabled.
+# VALUES  : metadata-only           - Record non-secret metadata; safe default
+#           capture-selected        - Capture explicitly selected artifacts
+#           capture-high-confidence - Capture high-confidence artifacts
+# ----------------------------------------------------------------------------
+GSCRAPE_CAPTURE_MODE=metadata-only
+
+# GSCRAPE_ENCRYPTED_OUTPUT_DIR
+# STATUS  : Optional; defaults to protected-artifacts/
+# FUNCTION: Selects the encrypted protected-artifact directory.
+# SUMMARY : Never use this for plaintext wallet exports or ordinary reports.
+# VALUES  : <path>  - For example protected-artifacts or /secure/artifacts
+#           <empty> - Use protected-artifacts/
+# ----------------------------------------------------------------------------
+GSCRAPE_ENCRYPTED_OUTPUT_DIR=protected-artifacts
+
+```
 
 ## Command-line usage
 
