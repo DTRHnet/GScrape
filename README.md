@@ -4,6 +4,22 @@
   <img src="logo.jpg" alt="GScrape logo" width="720">
 </p>
 
+<p align="center">
+  <a href="https://github.com/DTRHnet/GScrape/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-2ea44f?style=flat-square" alt="Release v1.2.0"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9 or newer"></a>
+  <a href="https://developers.google.com/gmail/api"><img src="https://img.shields.io/badge/API-Gmail%20readonly-ea4335?style=flat-square&amp;logo=gmail&amp;logoColor=white" alt="Gmail readonly API"></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-39%20passing-2ea44f?style=flat-square" alt="Tests passing"></a>
+  <a href="#security-and-data-handling"><img src="https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square" alt="Redacted output security"></a>
+</p>
+
+<p align="center">
+  <strong>Your mail · your data · your rules</strong>
+</p>
+
+
+> Take control of your email. Search it, understand it, and turn years of
+> messages into useful personal data — locally, privately, and on your terms.
+
 ## Developer note
 
 I originally built GScrape to quickly search through my old email accounts for
@@ -22,22 +38,6 @@ local dashboard makes searching and reviewing large amounts of personal data
 much faster. I never originally planned to release it publicly—but here it is.
 
 — KBS <admin@dtrh.net>
-
-<p align="center">
-  <strong>Your mail · your data · your rules</strong>
-</p>
-
-
-> Take control of your email. Search it, understand it, and turn years of
-> messages into useful personal data — locally, privately, and on your terms.
-
-<p align="center">
-  <a href="https://github.com/DTRHnet/GScrape/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-2ea44f?style=flat-square" alt="Release v1.2.0"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9 or newer"></a>
-  <a href="https://developers.google.com/gmail/api"><img src="https://img.shields.io/badge/API-Gmail%20readonly-ea4335?style=flat-square&amp;logo=gmail&amp;logoColor=white" alt="Gmail readonly API"></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-39%20passing-2ea44f?style=flat-square" alt="Tests passing"></a>
-  <a href="#security-and-data-handling"><img src="https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square" alt="Redacted output security"></a>
-</p>
 
 **Version:** `1.2.0` · **Status:** current release · **Deployment:** self-hosted
 
