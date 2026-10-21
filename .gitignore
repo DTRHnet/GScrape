@@ -12,6 +12,9 @@ client_secret*.json
 oauth*.json
 token*.json
 
+# Old implementations/scripts
+.old/
+
 # Wallets, backups, keys, and recovery artifacts
 *.dat
 *.wallet

@@ -1,7 +1,7 @@
 # GScrape
 
 <p align="center">
-  <img src="https://github.com/DTRHnet/GScrape/raw/main/logo.jpg?raw=true" alt="GScrape logo" width="720">
+  <img src="logo.jpg" alt="GScrape logo" width="720">
 </p>
 
 <p align="center">
@@ -12,29 +12,15 @@
 > Take control of your email. Search it, understand it, and turn years of
 > messages into useful personal data — locally, privately, and on your terms.
 
-[![Release](https://img.shields.io/badge/release-v1.2.0-2ea44f?style=flat-square)](https://github.com/DTRHnet/GScrape/releases/tag/v1.2.0)
-[![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![Gmail API](https://img.shields.io/badge/API-Gmail%20readonly-ea4335?style=flat-square&logo=gmail&logoColor=white)](https://developers.google.com/gmail/api)
-[![Tests](https://img.shields.io/badge/tests-26%20passing-2ea44f?style=flat-square)](#testing)
-[![Security](https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square)](#security-and-data-handling)
+<p align="center">
+  <a href="https://github.com/DTRHnet/GScrape/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-2ea44f?style=flat-square" alt="Release v1.2.0"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9 or newer"></a>
+  <a href="https://developers.google.com/gmail/api"><img src="https://img.shields.io/badge/API-Gmail%20readonly-ea4335?style=flat-square&amp;logo=gmail&amp;logoColor=white" alt="Gmail readonly API"></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-39%20passing-2ea44f?style=flat-square" alt="Tests passing"></a>
+  <a href="#security-and-data-handling"><img src="https://img.shields.io/badge/security-redacted%20output-d73a4a?style=flat-square" alt="Redacted output security"></a>
+</p>
 
 **Version:** `1.2.0` · **Status:** current release · **Deployment:** self-hosted
-
-The local control plane exposes non-secret account health at `/api/core/health`,
-operational counters at `/api/core/metrics`, and configurable generated-result
-retention through `GSCRAPE_RETENTION_DAYS` (default: 30 days). Gmail authorization
-and token refresh remain explicit operator actions.
-
-Job events are available through bounded cursor pagination at
-`/api/core/jobs/<id>/events?limit=100`; the returned `next_before_id` can be used
-for the next page. Event payloads remain redacted control-plane metadata.
-
-Settings now uses the shared account control plane. Add an account, choose
-**Connect**, and complete Google consent in the opened browser tab. The dashboard
-records only account/session metadata; the OAuth callback deliberately stops at
-the token-exchange boundary until the protected local credential-store step is
-enabled. Existing legacy sessions are recognized only when their profile matches
-the selected account.
 
 ## Overview
 
@@ -55,15 +41,6 @@ without handing your entire mailbox to a third party.
 GScrape is not a hosted analytics service. It is a personal instrument for
 learning from your own records while keeping the account connection, parser,
 results, and secrets under your control.
-
-Crypto discovery uses metadata-only capture by default. Promotional and bulk
-mail is down-ranked, while strong wallet and recovery evidence remains eligible
-for review. Full message or attachment capture is an explicit separate mode and
-requires an approved authenticated-encryption backend; the scanner fails closed
-instead of storing plaintext sensitive material in SQLite. Protected artifact
-metadata may be retained in the local control-plane database, but ordinary logs,
-reports, and dashboard responses never contain seeds, private keys, passwords, or
-attachment bytes.
 
 The included local backend uses AES-256-GCM from the pinned `cryptography`
 dependency. Ciphertext is stored in a mode-0600 protected-artifact directory;
@@ -117,15 +94,12 @@ Each acquired attachment can be selected with a checkbox; use **Select all** and
 are deduplicated locally and can be resolved across runs without another
 download.
 
-The project is intended to grow toward:
-
-- reusable search and extraction presets;
-- user-defined regex expressions and advanced configuration files;
-- provider adapters beyond Gmail;
-- optional LLM classification, extraction, and natural-language queries;
-- local model support and explicit provider/model controls;
-- saved queries, reusable reports, and richer personal analytics;
-- encrypted-at-rest secret storage with dashboard-specific reveal controls.
+The project is intended to grow toward reusable search and extraction presets,
+saved queries, richer personal analytics, provider adapters beyond Gmail, local
+model support, and dashboard-specific controls for protected artifacts. The
+current build already supports user-defined regex expressions, category regex
+overrides, attachment filters, contact filters, redacted reports, and optional
+LLM analysis; these are no longer future-only capabilities.
 
 The LLM layer is intentionally optional. A mailbox should remain useful with no
 model, no cloud inference, and no external data transfer.
@@ -138,25 +112,11 @@ model, no cloud inference, and no external data transfer.
 - Gmail readonly scope:
   `https://www.googleapis.com/auth/gmail.readonly`
 
-GScrape uses the Python standard library for its scanner and dashboard. A
-virtual environment is recommended.
+GScrape uses the Python standard library for most scanner and dashboard
+operations, with `cryptography` required for the protected-artifact security
+boundary. A virtual environment is recommended.
 
-## Screenshots
 
-The dashboard is local-only and provides a browser-based review surface for
-accounts, scans, findings, and operational status.
-
-<p align="center">
-  <img src="docs/screenshots/dashboard-overview.png" alt="GScrape local dashboard overview" width="860">
-  <br>
-  <sub>Local dashboard overview with scan controls and account status panels.</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/dashboard-settings.png" alt="GScrape dashboard settings" width="860">
-  <br>
-  <sub>Settings view for configuring an authorized local account and scan behavior.</sub>
-</p>
 
 ## Setup
 
@@ -205,6 +165,12 @@ Complete the Google consent flow in the existing local browser session. If
 Google requests account selection, MFA, or additional consent, complete that
 step yourself; GScrape does not bypass provider protections.
 
+<p align="center">
+  <a href="docs/screenshots/dashboard-auth.png"><img src="docs/screenshots/dashboard-auth.png" alt="GScrape authorization process" width="50%"></a>
+  <br>
+  <sub>Authorization workflow showing the local account connection and consent status.</sub>
+</p>
+
 ### 5. Start the dashboard
 
 ```bash
@@ -215,24 +181,29 @@ Open `http://127.0.0.1:8766/` in the same machine's browser. Add or connect an
 account from **Settings**, then use the search view to configure a bounded scan.
 Keep the terminal running while using the dashboard.
 
-### 6. Run a first historical scan
+<p align="center">
+  <a href="docs/screenshots/dashboard-settings.png"><img src="docs/screenshots/dashboard-settings.png" alt="GScrape settings with multiple account states" width="50%"></a>
+  <br>
+  <sub>Settings view showing multiple accounts in different authorization states.</sub>
+</p>
 
-For the project's historical crypto-evidence workflow, use explicit inclusive
-date bounds and a conservative message limit:
+### 6. Run a first image search
+
+To find image attachments without downloading their contents, enable attachment
+discovery and limit the search to common image extensions:
 
 ```bash
 python gscrape.py \
-  --categories gourl,wallet,seed,wallet-file,crypto-address,identity,phone \
-  --after 2013/01/01 \
-  --before 2018/12/31 \
+  --attachment-discovery \
+  --attachment-extensions jpg,jpeg,png,gif,webp \
   --max-messages 1000 \
   --env-file .env \
-  --log-file email-wallet-search.log \
   --verbose
 ```
 
-Review the redacted findings and audit log. Discovery does not authorize
-downloading attachments or attempting wallet recovery.
+Review the redacted filename metadata in the dashboard or generated report.
+Discovery does not download image bytes and does not authorize opening
+attachments or attempting wallet recovery.
 
 ### 7. Run offline reports and tests
 
@@ -248,18 +219,49 @@ tokens, mailbox contents, wallet files, recovery outputs, or sensitive logs.
 For a self-hosted deployment, treat the host, filesystem permissions, backups,
 and browser session as part of the security boundary.
 
-## Authentication
+## Environment variables
 
-Use the existing local OAuth flow and complete consent in the browser when
-prompted:
+`.env.example` is a commented template. Copy it to `.env`, then fill in only
+the values needed for the workflow you intend to run. Values in `.env` are
+loaded locally; they are never meant to be committed. The CLI also accepts
+`--env-file PATH` for a separate account/session file. A direct OAuth access
+token can run a scan until it expires; a refresh token requires the matching
+Google client ID and client secret and is better suited to repeatable scans.
 
-```bash
-python gscrape.py --authorize --env-file .env
-```
+The table below shows the practical dependency of each variable. `✅` means the
+variable is used for that capability, `◐` means it is optional or conditional,
+`❌` means the capability is unavailable when that value is missing, and `—`
+means the variable does not participate in that workflow. Defaults are shown in
+the final column, so an unset optional variable is not automatically an error.
 
-The redirect URI must exactly match the URI registered in Google Cloud. API keys
-do not grant access to private Gmail messages; mailbox access requires an
-authorized OAuth credential.
+| Environment variable | Dashboard account connection | `--authorize` | Gmail scan | LLM analysis | If unset |
+| --- | :---: | :---: | :---: | :---: | --- |
+| `GOOGLE_CLIENT_ID` | ✅ | ✅ | ◐ | — | ❌ OAuth connection/refresh cannot use the account |
+| `GOOGLE_CLIENT_SECRET` | ✅ | ✅ | ◐ | — | ❌ Authorization and refresh-token scans fail |
+| `GMAIL_REFRESH_TOKEN` | ◐ | — | ✅ | — | ❌ Refresh-token scans need an access token instead |
+| `GMAIL_ACCESS_TOKEN` | — | — | ✅ | — | ❌ Direct-token scans need a refresh flow instead |
+| `GOOGLE_API_KEY` | — | — | ◐ | — | No project-key hint; ❌ it never authorizes Gmail by itself |
+| `GOOGLE_REDIRECT_URI` | ✅ | ✅ | ◐ | — | Uses the local callback default |
+| `OPENAI_API_KEY` | — | — | — | ✅ | ❌ LLM analysis is skipped or rejected |
+| `LLM_API_BASE` | — | — | — | ✅ | Uses `https://api.openai.com/v1` |
+| `LLM_MODEL` | — | — | — | ✅ | Uses the configured code/CLI fallback model |
+| `GSCRAPE_LLM_ENABLED` | ◐ | — | — | ✅ | ❌ Automatic dashboard reports stay disabled |
+| `LLM_API_KEY_ENV` | — | — | — | ✅ | Reads `OPENAI_API_KEY` |
+| `LLM_OUTPUT_DIR` | — | — | — | ✅ | Writes to `llm-reports/` |
+| `GSCRAPE_RETENTION_DAYS` | ✅ | — | — | — | Retains generated results for 30 days |
+| `GSCRAPE_SORT_FINDINGS` | — | — | — | — | No direct runtime override; use explicit sort controls |
+| `GSCRAPE_SECRET_EVIDENCE_ENABLED` | — | — | — | — | No direct runtime override; fail-closed policy remains |
+| `GSCRAPE_CAPTURE_MODE` | — | — | — | — | No direct `.env` override; metadata-only remains safe default |
+| `GSCRAPE_ENCRYPTED_OUTPUT_DIR` | — | — | — | — | No direct `.env` override; protected-artifact default remains |
+
+For `GSCRAPE_CAPTURE_MODE`, the accepted policy names are `metadata-only`,
+`capture-selected`, and `capture-high-confidence`. The current Gmail provider
+supports `metadata-only` and deliberately rejects capture modes unless an
+approved encrypted backend is enabled. This prevents a setting in `.env` from
+silently causing plaintext wallet or attachment capture. Likewise, the final
+four policy variables are documented configuration names but are not standalone
+runtime switches in the current build; the explicit CLI/dashboard controls and
+provider validation remain authoritative.
 
 ## Command-line usage
 
@@ -267,17 +269,23 @@ authorized OAuth credential.
 python gscrape.py --help
 ```
 
-Dates are unrestricted by default. Run a focused historical search only when you
-provide explicit bounds:
+The same search controls are available in the local dashboard:
+
+<p align="center">
+  <a href="docs/screenshots/dashboard-search.png"><img src="docs/screenshots/dashboard-search.png" alt="GScrape dashboard search page" width="50%"></a>
+  <br>
+  <sub>Search page with category, date-range, and scan controls.</sub>
+</p>
+
+Dates are unrestricted by default. To search for image attachments without
+downloading their contents:
 
 ```bash
 python gscrape.py \
-  --categories gourl,wallet,seed,wallet-file,crypto-address,identity,phone \
-  --after 2013/01/01 \
-  --before 2018/12/31 \
+  --attachment-discovery \
+  --attachment-extensions jpg,jpeg,png,gif,webp \
   --max-messages 1000 \
   --env-file .env \
-  --log-file email-wallet-search.log \
   --verbose
 ```
 
@@ -289,10 +297,11 @@ Run one category only:
 python gscrape.py --category wallet-file --env-file .env
 ```
 
-The CLI is the stable entry point for repeatable scans. Presets and advanced
-custom-rule configuration are part of the planned expansion; until those
-interfaces are available, use the existing categories and the scanner's current
-configuration options shown by `--help`.
+The CLI is the stable entry point for repeatable scans. Use `--category` or
+`--categories` for built-in detectors, `--domain` for content/attachment and
+identity-oriented views, `--category-regex` or `--query` for custom matching,
+and the attachment/contact options for narrower discovery. Run
+`python gscrape.py --help` for the complete current option set.
 
 Generate a report or export existing redacted records without contacting Gmail:
 
@@ -354,6 +363,29 @@ Open `http://127.0.0.1:8766/` locally. The search form exposes the same rate
 controls as the CLI and provides a review surface for findings, reports, and
 account-scoped progress.
 
+<table align="center">
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/dashboard-overview.png"><img src="docs/screenshots/dashboard-overview.png" alt="GScrape overview after a search" width="50%"></a><br>
+      <sub>Overview page after a search has completed, with the run summary and findings status.</sub>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/dashboard-results.png"><img src="docs/screenshots/dashboard-results.png" alt="GScrape expanded search results" width="50%"></a><br>
+      <sub>Full expanded results page for reviewing longer search output and evidence details.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/dashboard-imgsearch.png"><img src="docs/screenshots/dashboard-imgsearch.png" alt="GScrape image search results" width="50%"></a><br>
+      <sub>Image-search results view for visually reviewing relevant image evidence.</sub>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/dashboard-debug.png"><img src="docs/screenshots/dashboard-debug.png" alt="GScrape system diagnostics page" width="50%"></a><br>
+      <sub>System diagnostics page showing local service health and operational checks.</sub>
+    </td>
+  </tr>
+</table>
+
 Because this is a personal data tool, the dashboard follows a deliberate
 display/storage split:
 
@@ -367,20 +399,30 @@ display/storage split:
 Do not expose the dashboard publicly or use it to bypass authentication, MFA,
 account selection, or provider access controls.
 
-## Search categories
+## Search Categories
 
-| Category | Evidence examples |
+The scanner combines Gmail search passes with local matching and redacted
+evidence scoring. The dashboard can run one category, several categories, or
+all categories together. Matches may come from message text or, when attachment
+discovery is enabled, attachment filenames and metadata.
+
+| Category | Current coverage |
 | --- | --- |
-| `gourl` | GoURL, `go url`, punctuated and obfuscated variants |
-| `wallet` | Wallet software, exchanges, hardware wallets, blockchain terms |
-| `seed` | Recovery phrase, mnemonic, backup phrase, BIP terminology |
-| `wallet-file` | `wallet.dat`, `wal*.dat`, keystore and backup filenames |
-| `crypto-address` | Candidate Bitcoin, Litecoin, or Ethereum address shapes |
-| `identity` | Configured identity spelling variants |
-| `phone` | Candidate phone-number formats |
+| `gourl` | GoURL references, including spacing, punctuation, and common obfuscations |
+| `wallet` | Wallet software, exchanges, blockchain assets, hardware wallets, cold storage, and related service terms |
+| `seed` | Seed/recovery phrases, mnemonics, recovery words, BIP terminology, paper wallets, and key/keystore references |
+| `wallet-file` | Wallet and backup filenames, including `wal*.dat`, `.wallet`, `.dat`, keystore, backup, database, and related extensions |
+| `crypto-address` | Candidate Bitcoin, Litecoin, and Ethereum address-shaped strings plus transaction/deposit terminology |
+| `identity` | Configured identity spelling variants such as `jstacey`, `jonstacey`, `jstacy`, `jonstacy`, `johnstacy`, and `johnstacey` |
+| `phone` | Common North American phone, mobile, telephone, and contact-number formats |
 
-Address-shaped strings and keyword matches are candidates, not proof of
-ownership, relevance, or successful recovery.
+The current dashboard also supports attachment-only discovery, attachment
+extension filters, attachment filename regular expressions, contact email or
+domain filters, free-text queries, custom regular expressions, date bounds,
+message limits, and rate-limit controls. These controls narrow or explain the
+search; they do not grant permission to download attachments or recover wallet
+contents. Address-shaped strings and keyword matches remain candidates, not
+proof of ownership, relevance, authenticity, or successful recovery.
 
 ## Presets, rules, and LLM workflows
 
@@ -390,11 +432,11 @@ GScrape is designed as a progression rather than a single search mode:
 preset  →  filters  →  custom regex  →  structured extraction  →  optional LLM
 ```
 
-A future preset might answer “find bank transfers from 2022,” “locate every
-receipt attachment,” or “show messages mentioning a wallet backup.” Advanced
-users should be able to override matching with regex expressions, field-specific
-rules, scoring weights, date windows, sender constraints, and extraction
-configuration.
+Built-in categories and attachment discovery already cover workflows such as
+locating receipt images or messages mentioning a wallet backup. Advanced users
+can override matching with regex expressions, field-specific rules, date
+windows, sender/contact constraints, and extraction filters. Reusable saved
+presets and saved queries remain planned improvements.
 
 An LLM can help interpret meaning, normalize varied language, classify messages,
 or summarize a result set. It should not silently replace deterministic evidence:
@@ -414,7 +456,8 @@ safe partial representation instead.
 
 Typical local outputs include:
 
-- `email-wallet-search.log` — append-only redacted audit log
+- `credentials/` — local OAuth credential material; keep private and never commit
+- `sessions/` — account-scoped session environment files; keep private and never commit
 - `results/` — redacted reports and progress records
 - `logs/` — local dashboard operational logs
 - `dashboard.db` — local dashboard state
