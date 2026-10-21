@@ -4,6 +4,25 @@
   <img src="logo.jpg" alt="GScrape logo" width="720">
 </p>
 
+## Developer note
+
+I originally built GScrape to quickly search through my old email accounts for
+cryptocurrency wallets and related records. I was frustrated by browser search
+rules, paginated results, and having to open every message individually just to
+decide whether it mattered.
+
+As the project grew, I realized it could be useful for much more than crypto.
+It became a way to recover old photographs that might otherwise have been lost,
+rediscover conversations with people who are no longer here, and revisit some
+of the best and most difficult moments of my life. What began as a small Python
+script for pulling matching messages turned into a passion project.
+
+I have simplified the workflow considerably. GScrape remains CLI-native, but the
+local dashboard makes searching and reviewing large amounts of personal data
+much faster. I never originally planned to release it publicly—but here it is.
+
+— KBS <admin@dtrh.net>
+
 <p align="center">
   <strong>Your mail · your data · your rules</strong>
 </p>
@@ -538,28 +557,24 @@ account selection, or provider access controls.
 
 ## Search Categories
 
-The scanner combines Gmail search passes with local matching and redacted
-evidence scoring. The dashboard can run one category, several categories, or
-all categories together. Matches may come from message text or, when attachment
-discovery is enabled, attachment filenames and metadata.
+The dashboard presents these six user-facing search categories. The scanner
+combines Gmail search passes with local matching and redacted evidence scoring;
+the lower-level detector names are implementation details behind these views.
 
 | Category | Current coverage |
 | --- | --- |
-| `gourl` | GoURL references, including spacing, punctuation, and common obfuscations |
-| `wallet` | Wallet software, exchanges, blockchain assets, hardware wallets, cold storage, and related service terms |
-| `seed` | Seed/recovery phrases, mnemonics, recovery words, BIP terminology, paper wallets, and key/keystore references |
-| `wallet-file` | Wallet and backup filenames, including `wal*.dat`, `.wallet`, `.dat`, keystore, backup, database, and related extensions |
-| `crypto-address` | Candidate Bitcoin, Litecoin, and Ethereum address-shaped strings plus transaction/deposit terminology |
-| `identity` | Configured identity spelling variants such as `jstacey`, `jonstacey`, `jstacy`, `jonstacy`, `johnstacy`, and `johnstacey` |
-| `phone` | Common North American phone, mobile, telephone, and contact-number formats |
+| **Attachments** | Attachment filenames and metadata, with optional extension and filename-regex filters. Discovery does not download attachment bytes by default. |
+| **Phone Numbers** | Common North American phone, mobile, telephone, and contact-number formats. |
+| **Contacts** | Contact email addresses, domains, and related sender/recipient filtering. |
+| **Content** | Message body and subject text, including configured terms, free-text queries, GoURL references, and custom regular expressions. |
+| **Crypto** | Wallet software, exchanges, blockchain assets, recovery terminology, wallet filenames, and candidate cryptocurrency addresses. |
+| **Identity** | Configured identity spelling variants and related identity terms. |
 
-The current dashboard also supports attachment-only discovery, attachment
-extension filters, attachment filename regular expressions, contact email or
-domain filters, free-text queries, custom regular expressions, date bounds,
-message limits, and rate-limit controls. These controls narrow or explain the
-search; they do not grant permission to download attachments or recover wallet
-contents. Address-shaped strings and keyword matches remain candidates, not
-proof of ownership, relevance, authenticity, or successful recovery.
+These categories can be combined with date bounds, message limits, Gmail query
+filters, rate-limit controls, and explainable relevance scoring. Matches remain
+candidates, not proof of ownership, relevance, authenticity, or successful
+recovery. Searching for an attachment does not authorize opening it, downloading
+it, or attempting wallet recovery.
 
 ## Presets, rules, and LLM workflows
 
