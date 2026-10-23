@@ -39,7 +39,9 @@ class LocalFileSecretStore(SecretStore):
         os.chmod(self.root, 0o700)
 
     def _path(self, secret_ref: SecretRef) -> Path:
-        if secret_ref.backend != "local-file" or not secret_ref.id.isalnum():
+        if secret_ref.backend != "local-file" or not secret_ref.id or not all(
+            character.isalnum() or character in "-_" for character in secret_ref.id
+        ):
             raise ValueError("invalid local secret reference")
         return self.root / f"{secret_ref.id}.json"
 

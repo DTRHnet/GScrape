@@ -2,7 +2,11 @@
 
 All notable changes are documented here.
 
-## [1.2.0] - 2026-10-21
+## [1.3.0] - 2026-10-23
+
+### Added
+
+- Added an isolated Raw Export workflow with a separate SQLite database for complete unredacted Gmail messages and optional attachment blobs.
 
 ### Changed
 

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from core.artifacts import assess_relevance
+from core.raw_export import export_gmail_mailbox
 
 
 API_ROOT = "https://gmail.googleapis.com/gmail/v1/users"
@@ -250,8 +251,10 @@ def acquire_attachment_bytes(message_id: str, attachment: Dict[str, Any], base_u
                              retries: int, rate_limiter: AdaptiveRateLimiter) -> Dict[str, Any]:
     """Download one attachment, reusing an existing file with the same SHA-256."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    index_path = output_dir / ".sha256-index.json"
-    identity_index_path = output_dir / ".attachment-index.json"
+    # Keep bookkeeping outside the attachment directory so directory listings
+    # contain only acquired payloads (and legacy callers remain compatible).
+    index_path = output_dir.parent / f".{output_dir.name}-sha256-index.json"
+    identity_index_path = output_dir.parent / f".{output_dir.name}-attachment-index.json"
     identity = f"{message_id}:{attachment['attachment_id']}"
     try:
         identity_index = json.loads(identity_index_path.read_text(encoding="utf-8"))
@@ -1071,7 +1074,9 @@ def load_match_records(log_path: Path) -> List[Dict[str, Any]]:
                 )
                 obj["suppressed"] = assessment.suppressed
                 records.append(obj)
-    return sort_match_records(records)
+    # Preserve log order for callers that inspect or stream findings.  Views
+    # that need best-first presentation can explicitly call sort_match_records.
+    return records
 
 
 def sort_match_records(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1691,6 +1696,32 @@ def list_labels(access_token: str, user: str = "me") -> List[Dict[str, Any]]:
     return data.get("labels") or []
 
 
+def raw_export(args: argparse.Namespace, api_key: Optional[str], access_token: str) -> Dict[str, Any]:
+    """Run the explicit full-fidelity export path outside redacted reporting."""
+    date_parts = []
+    if not args.no_date_filter:
+        if args.after:
+            date_parts.append(f"after:{normalize_gmail_date(args.after)}")
+        if args.before:
+            date_parts.append(f"before:{normalize_gmail_date(args.before, inclusive_end=True)}")
+    return export_gmail_mailbox(
+        database_path=args.raw_database,
+        blob_root=args.raw_blob_dir,
+        account=args.user,
+        query=" ".join([args.query or "", *date_parts]).strip(),
+        max_messages=args.max_messages,
+        request_json=request_json,
+        access_token=access_token,
+        api_key=api_key,
+        retries=args.retries,
+        rate_limiter=AdaptiveRateLimiter(args.requests_per_second, args.rate_limit_max_delay),
+        include_attachments=args.raw_include_attachments,
+        attachment_extensions=args.raw_attachment_extensions,
+        attachment_filename_regex=args.raw_attachment_filename_regex,
+        export_id=args.raw_export_id or None,
+    )
+
+
 # =============================================================================
 # Core search logic
 # =============================================================================
@@ -2053,6 +2084,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="list Gmail labels for the account then exit",
     )
+    parser.add_argument("--raw-export", action="store_true", help="export complete unredacted Gmail messages to the separate raw database")
+    parser.add_argument("--raw-database", type=Path, default=Path("raw-mailbox/raw-mailbox.db"))
+    parser.add_argument("--raw-blob-dir", type=Path, default=Path("raw-mailbox/blobs"))
+    parser.add_argument("--raw-include-attachments", action="store_true", help="download selected raw-export attachments")
+    parser.add_argument("--raw-attachment-extensions", default="", help="raw-export attachment extensions")
+    parser.add_argument("--raw-attachment-filename-regex", default="", help="raw-export attachment filename regex")
+    parser.add_argument("--raw-export-id", default="", help="resume an existing raw export by ID")
     parser.add_argument(
         "--suggest-queries",
         choices=sorted(CATEGORY_PATTERNS),
@@ -2082,6 +2120,11 @@ def parse_args() -> argparse.Namespace:
         )
         if args.attachment_filename_regex:
             re.compile(args.attachment_filename_regex, re.I)
+        args.raw_attachment_extensions = normalize_attachment_extensions(
+            [item for item in args.raw_attachment_extensions.split(",") if item.strip()]
+        )
+        if args.raw_attachment_filename_regex:
+            re.compile(args.raw_attachment_filename_regex, re.I)
     except (ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
     return args
@@ -2180,6 +2223,13 @@ def main() -> None:
             labels = list_labels(access_token, args.user)
             for lab in labels:
                 print(f"{lab.get('id', ''):40s}  {lab.get('name', '')}")
+        except RuntimeError as error:
+            raise SystemExit(str(error)) from error
+        return
+
+    if args.raw_export:
+        try:
+            print(json.dumps(raw_export(args, api_key, access_token)))
         except RuntimeError as error:
             raise SystemExit(str(error)) from error
         return

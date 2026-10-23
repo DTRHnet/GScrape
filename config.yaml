@@ -51,3 +51,7 @@ llm:
   api_key_env: OPENAI_API_KEY
   include_secret_values: false
   output_dir: llm-reports
+raw_export:
+  database: raw-mailbox/raw-mailbox.db
+  blob_dir: raw-mailbox/blobs
+  include_attachments: false

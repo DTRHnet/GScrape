@@ -313,7 +313,7 @@ GOOGLE_API_KEY=
 # VALUES  : <local-uri> - For example http://127.0.0.1:8765/
 #           <empty>     - Use the application callback default
 # ----------------------------------------------------------------------------
-GOOGLE_REDIRECT_URI=http://127.0.0.1:8765/
+GOOGLE_REDIRECT_URI=http://127.0.0.1:8766/api/core/oauth/callback
 
 # OPENAI_API_KEY
 # STATUS  : Optional; required only for LLM analysis
@@ -640,6 +640,44 @@ transmit, or place in source control.
 See [`AGENTS.md`](AGENTS.md) for the complete operating rules.
 
 ## Testing
+
+## Raw mailbox export
+
+The dashboard includes a dedicated **Raw Export** page. It writes complete,
+unredacted Gmail API message records to `raw-mailbox/raw-mailbox.db`, separate
+from `dashboard.db`. Optional attachment bytes are stored under
+`raw-mailbox/blobs/` and indexed by SHA-256 in the raw database. The normal
+search pipeline, redacted logs, dashboard reports, and job events do not read or
+return this raw data. Use the Raw Export controls only for accounts and data you
+are authorized to process.
+
+### LAN access
+
+The dashboard defaults to loopback-only access. To expose it on a trusted LAN,
+set the following in the private `.env` file before starting the service:
+
+```dotenv
+GSCRAPE_HOST=0.0.0.0
+GSCRAPE_PORT=8766
+GOOGLE_REDIRECT_URI=http://<lan-ip>:8766/api/core/oauth/callback
+```
+
+Then open `http://<lan-ip>:8766/` from another device. This is an unauthenticated
+HTTP service that can expose raw mailbox messages, headers, RFC822 files, and
+attachments. Use a trusted network/firewall, do not port-forward it to the
+Internet, and register the exact OAuth callback URL in Google Cloud before using
+the Connect flow. Return to `GSCRAPE_HOST=127.0.0.1` for local-only operation.
+
+The CLI equivalent is:
+
+```bash
+python gscrape.py --raw-export --max-messages 10000 --raw-database raw-mailbox/raw-mailbox.db
+```
+
+Add `--raw-include-attachments` to download selected attachment bytes, with
+`--raw-attachment-extensions` and `--raw-attachment-filename-regex` available
+for filtering. Raw exports intentionally contain unredacted personal data and
+must be protected, backed up, and deleted separately from ordinary results.
 
 ```bash
 python -m py_compile gscrape.py dashboard_server.py test_search_gmail_patterns.py

@@ -285,6 +285,39 @@ h3 { font-size: 14px; }
 .table tbody tr { transition: background .16s ease; }
 .table tbody tr:hover { background: var(--panel-hover); }
 .table tr:last-child td { border-bottom: 0; }
+.raw-export-detail-row td { padding: 0; }
+.raw-export-detail { padding: 16px; background: var(--panel-strong); border-top: 1px solid var(--line); }
+.progress-head { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 7px; }
+.raw-messages-head { margin-top: 18px; }
+.raw-message-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto; gap: 10px; align-items: end; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.raw-message-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.raw-message-filters input, .raw-message-filters select { width: 100%; min-height: 34px; padding: 7px 9px; color: var(--text); border: 1px solid var(--line); border-radius: 7px; background: var(--panel-strong); }
+.raw-message-list { display: grid; gap: 8px; margin-top: 10px; }
+.raw-message-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel); }
+.raw-message-item > div:first-child { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.raw-message-summary { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.raw-message-summary h4 { margin: 0 0 6px; font-size: 1rem; }
+.raw-message-summary small { display: block; margin-top: 5px; }
+.raw-message-item .muted { display: block; font-size: 0.85em; }
+.raw-message-detail { margin-top: 10px; padding: 10px; border-top: 1px solid var(--border); overflow: auto; }
+.raw-header-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 12px 0; }
+.raw-header-summary div { display: grid; gap: 3px; }
+.raw-header-summary span { overflow-wrap: anywhere; }
+.raw-message-detail pre { max-height: 320px; overflow: auto; white-space: pre-wrap; }
+.raw-message-detail ul { margin: 8px 0; padding-left: 20px; }
+.raw-message-detail li { margin: 6px 0; }
+.raw-message-detail li .muted { display: block; }
+.raw-message-pagination { margin-top: 10px; justify-content: flex-end; }
+.progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--line-soft); }
+.progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+.progress-fill { width: 0; }
+.progress-fill.progress-10 { width: 10%; }.progress-fill.progress-20 { width: 20%; }.progress-fill.progress-30 { width: 30%; }
+.progress-fill.progress-40 { width: 40%; }.progress-fill.progress-50 { width: 50%; }.progress-fill.progress-60 { width: 60%; }
+.progress-fill.progress-70 { width: 70%; }.progress-fill.progress-80 { width: 80%; }.progress-fill.progress-90 { width: 90%; }.progress-fill.progress-100 { width: 100%; }
+.raw-export-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin: 14px 0; }
+.raw-export-metrics span { display: flex; flex-direction: column; gap: 3px; color: var(--muted); }
+.raw-export-metrics strong { color: var(--text); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.raw-export-error { margin-top: 12px; padding: 10px; color: #ffb4b4; background: rgba(255,80,80,.1); border: 1px solid rgba(255,100,100,.35); border-radius: 8px; white-space: normal; }
 .wrap-cell { white-space: normal; word-break: break-word; }
 .findings-table th, .findings-table td { white-space: normal; vertical-align: top; }
 .finding-group + .finding-group { border-top: 12px solid var(--bg); }
@@ -372,6 +405,8 @@ h3 { font-size: 14px; }
 .date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
 .date-fields label { display: flex; flex-direction: column; gap: 6px; }
 .checkbox-label { display: inline-flex; position: relative; align-items: center; justify-content: center; width: 18px; height: 18px; margin: 0; cursor: pointer; }
+.checkbox-setting { display: flex; align-items: center; gap: 9px; min-height: 18px; }
+.checkbox-setting-text { cursor: pointer; }
 .checkbox-label input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
 .checkmark { width: 16px; height: 16px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg-raised); transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .checkbox-label:hover .checkmark { border-color: var(--accent); }

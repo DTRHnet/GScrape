@@ -52,9 +52,13 @@ LOG_DIR = ROOT / "logs"
 LOG_CONFIG_PATH = LOG_DIR / "logging.json"
 RESULTS_DIR = ROOT / "results"
 ACQUIRED_DIR = ROOT / "acquired-attachments"
+RAW_EXPORT_ROOT = ROOT / "raw-mailbox"
+RAW_EXPORT_DB = RAW_EXPORT_ROOT / "raw-mailbox.db"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff", ".bmp"}
 DEFAULT_LOG_CONFIG = {"level": "INFO", "max_bytes": 5 * 1024 * 1024, "backup_count": 5}
 METRICS = {"jobs_created": 0, "jobs_completed": 0, "jobs_failed": 0, "jobs_cancelled": 0}
+RAW_EXPORT_PROCESSES = {}
+RAW_EXPORT_LOCK = threading.Lock()
 LOGGER = logging.getLogger("gscrape.dashboard")
 ACTIVE_LOG_HANDLER = None
 CORE_JOB_RUNNER = AsyncJobRunner(str(DB_PATH))
@@ -76,6 +80,8 @@ def load_dotenv_file(path=ROOT / ".env"):
         "GOOGLE_CLIENT_ID",
         "GOOGLE_CLIENT_SECRET",
         "GOOGLE_REDIRECT_URI",
+        "GSCRAPE_HOST",
+        "GSCRAPE_PORT",
     }
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         stripped = line.strip()
@@ -91,6 +97,13 @@ def load_dotenv_file(path=ROOT / ".env"):
 
 
 load_dotenv_file()
+HOST = os.environ.get("GSCRAPE_HOST", HOST).strip() or "127.0.0.1"
+try:
+    PORT = int(os.environ.get("GSCRAPE_PORT", str(PORT)))
+except ValueError as error:
+    raise RuntimeError("GSCRAPE_PORT must be an integer") from error
+if not 1 <= PORT <= 65535:
+    raise RuntimeError("GSCRAPE_PORT must be between 1 and 65535")
 RETENTION_DAYS = int(os.environ.get("GSCRAPE_RETENTION_DAYS", "30"))
 OAUTH_REDIRECT_URI = os.environ.get(
     "GOOGLE_REDIRECT_URI",
@@ -662,7 +675,6 @@ a{{color:#9cf}}
 <h1 class="{status_class}">{escape(title)}</h1>
 <p>{escape(message)}</p>
 <p><a href="{destination}">Return to GScrape settings</a></p>
-<script>setTimeout(function(){{ location.replace({json.dumps(destination)}); }}, 600);</script>
 </main></body></html>"""
 
 
@@ -1213,6 +1225,93 @@ def run_scan(run_id, config):
     LOGGER.info("scan finished: %s (%s)", run_id, status if "status" in locals() else "failed")
 
 
+def run_raw_export(export_id, config):
+    """Run unredacted export in a separate child process and database."""
+    RAW_EXPORT_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    account_connection = db()
+    account = account_connection.execute("SELECT id, email FROM accounts_v2 WHERE id=?", (config["account_id"],)).fetchone()
+    account_connection.close()
+    if not account:
+        raise RuntimeError("Gmail account was not found")
+    command = [str(PYTHON if PYTHON.exists() else sys.executable), str(SCANNER), "--raw-export",
+               "--raw-database", str(RAW_EXPORT_DB), "--raw-blob-dir", str(RAW_EXPORT_ROOT / "blobs"),
+               "--user", "me", "--max-messages", str(config["max_messages"]), "--requests-per-second", str(config["requests_per_second"]),
+               "--rate-limit-max-delay", str(config["rate_limit_max_delay"]), "--env-file", str(SESSION_DIR / f"{config['account_id']}.env")]
+    if config.get("query"):
+        command.extend(["--query", config["query"]])
+    if config.get("after_date"):
+        command.extend(["--after", config["after_date"]])
+    if config.get("before_date"):
+        command.extend(["--before", config["before_date"]])
+    if config.get("include_attachments"):
+        command.append("--raw-include-attachments")
+    if config.get("attachment_extensions"):
+        command.extend(["--raw-attachment-extensions", ",".join(config["attachment_extensions"])])
+    if config.get("attachment_filename_regex"):
+        command.extend(["--raw-attachment-filename-regex", config["attachment_filename_regex"]])
+    if config.get("resume_id"):
+        command.extend(["--raw-export-id", config["resume_id"]])
+    output_path = RAW_EXPORT_ROOT / f"{export_id}.log"
+    with output_path.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(command, cwd=ROOT, stdout=output, stderr=subprocess.STDOUT, env=scanner_env())
+        with RAW_EXPORT_LOCK:
+            RAW_EXPORT_PROCESSES[export_id] = process
+        code = process.wait()
+    with RAW_EXPORT_LOCK:
+        RAW_EXPORT_PROCESSES.pop(export_id, None)
+    LOGGER.info("raw export finished: %s code=%s", export_id, code)
+
+
+def raw_export_snapshot():
+    from core.raw_export import RawMailboxDatabase
+    if not RAW_EXPORT_DB.exists():
+        return {"exports": []}
+    with RawMailboxDatabase(RAW_EXPORT_DB) as database:
+        rows = database.connection.execute("SELECT * FROM raw_exports ORDER BY created_at DESC").fetchall()
+        exports = []
+        for row in rows:
+            item = dict(row)
+            if not item.get("processed_messages") and item.get("message_count"):
+                item["processed_messages"] = item["message_count"]
+            exports.append(item)
+        return {"exports": exports}
+
+
+def raw_mailbox_database():
+    from core.raw_export import RawMailboxDatabase
+    if not RAW_EXPORT_DB.exists():
+        return None
+    return RawMailboxDatabase(RAW_EXPORT_DB)
+
+
+def raw_message_snapshot(export_id: str, row_id: int) -> dict | None:
+    database = raw_mailbox_database()
+    if database is None:
+        return None
+    try:
+        row = database.message(export_id, row_id)
+        if row is None:
+            return None
+        item = dict(row)
+        item["attachments"] = []
+        for attachment in database.attachments(export_id, row_id):
+            attachment_item = dict(attachment)
+            # Binary attachment content is available only through the download
+            # endpoint; never place it in a JSON response.
+            attachment_item.pop("content", None)
+            item["attachments"].append(attachment_item)
+        try:
+            item["raw_api"] = json.loads(item.pop("raw_api_json"))
+        except (TypeError, json.JSONDecodeError):
+            item["raw_api"] = None
+        raw_rfc822 = item.pop("raw_rfc822", None)
+        from core.header_analysis import analyze_email_headers
+        item["header_analysis"] = analyze_email_headers(raw_rfc822)
+        return item
+    finally:
+        database.close()
+
+
 def generate_configured_llm_report(run_id, records):
     """Generate a local report from redacted metadata when explicitly enabled."""
     if os.environ.get("GSCRAPE_LLM_ENABLED", "").lower() not in {"1", "true", "yes", "on"}:
@@ -1253,6 +1352,24 @@ class Handler(BaseHTTPRequestHandler):
         raw = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        if content_type.startswith("text/html"):
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
+            )
+            self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def send_bytes(self, raw: bytes, content_type: str, *, filename: str = "", inline: bool = False):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if filename:
+            disposition = "inline" if inline else "attachment"
+            safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(filename).name).strip(" .") or "download"
+            self.send_header("Content-Disposition", f'{disposition}; filename="{safe_name[:180]}"')
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
@@ -1288,7 +1405,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "service": "GScrape",
                     "scanner": SCANNER.name,
-                    "local_only": True,
+                    "local_only": HOST in {"127.0.0.1", "localhost", "::1"},
                     "database": str(DB_PATH.name),
                     "version": "1.2.0",
                 })
@@ -1493,6 +1610,102 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if parsed.path == "/api/runs":
                 return json_response(self, {"runs": list_rows("runs")})
+            raw_message_match = re.fullmatch(r"/api/raw-exports/([A-Za-z0-9_-]{1,100})/messages/([0-9]+)", parsed.path)
+            if raw_message_match:
+                export_id, row_id_text = raw_message_match.groups()
+                snapshot = raw_message_snapshot(export_id, int(row_id_text))
+                if snapshot is None:
+                    return json_response(self, {"error": "raw message not found"}, 404)
+                return json_response(self, {"message": snapshot})
+            raw_messages_match = re.fullmatch(r"/api/raw-exports/([A-Za-z0-9_-]{1,100})/messages", parsed.path)
+            if raw_messages_match:
+                export_id = raw_messages_match.group(1)
+                query = parse_qs(parsed.query)
+                try:
+                    limit = max(1, min(int(query.get("limit", [50])[0]), 200))
+                    offset = max(0, int(query.get("offset", [0])[0]))
+                except (TypeError, ValueError):
+                    return json_response(self, {"error": "invalid message pagination"}, 400)
+                subject = query.get("subject", [""])[0].strip()[:200]
+                sender = query.get("sender", [""])[0].strip()[:200]
+                attachment_type = query.get("attachment_type", [""])[0].strip().lower()
+                if attachment_type not in {"", "image", "document", "spreadsheet", "archive", "audio", "video", "other"}:
+                    return json_response(self, {"error": "invalid attachment type"}, 400)
+                database = raw_mailbox_database()
+                if database is None:
+                    return json_response(self, {"messages": [], "total": 0, "offset": offset, "limit": limit})
+                try:
+                    export = database.connection.execute("SELECT id FROM raw_exports WHERE id=?", (export_id,)).fetchone()
+                    if export is None:
+                        return json_response(self, {"error": "raw export not found"}, 404)
+                    messages = []
+                    from core.header_analysis import analyze_email_headers
+                    rows, total = database.list_messages(export_id, limit=limit, offset=offset, subject=subject, sender=sender, attachment_type=attachment_type)
+                    for row in rows:
+                        message_item = dict(row)
+                        # Filtering needs the raw columns internally, but the list
+                        # endpoint must never return complete mailbox contents.
+                        message_item.pop("raw_api_json", None)
+                        message_item.pop("raw_rfc822", None)
+                        full_row = database.message(export_id, int(row["id"]))
+                        analysis = analyze_email_headers(full_row["raw_rfc822"] if full_row else None)
+                        fields = analysis.get("fields", {})
+                        message_item.update({
+                            "subject": fields.get("subject", ""),
+                            "from": fields.get("from", []),
+                            "to": fields.get("to", []),
+                            "date": fields.get("date", ""),
+                            "date_utc": fields.get("date_utc", ""),
+                            "reply_to": fields.get("reply_to", []),
+                            "return_path": fields.get("return_path", []),
+                            "header_risk": analysis.get("risk_level", "unknown"),
+                        })
+                        messages.append(message_item)
+                    return json_response(self, {"messages": messages, "total": total, "offset": offset, "limit": limit, "filters": {"subject": subject, "sender": sender, "attachment_type": attachment_type}})
+                finally:
+                    database.close()
+            raw_download_match = re.fullmatch(r"/api/raw-exports/([A-Za-z0-9_-]{1,100})/messages/([0-9]+)/(eml|attachment/([0-9]+))", parsed.path)
+            if raw_download_match:
+                export_id, row_id_text, kind, attachment_id_text = raw_download_match.groups()
+                database = raw_mailbox_database()
+                if database is None:
+                    return self.send_error(404)
+                try:
+                    row_id = int(row_id_text)
+                    message = database.message(export_id, row_id)
+                    if message is None:
+                        return self.send_error(404)
+                    if kind == "eml":
+                        raw = message["raw_rfc822"]
+                        if raw is None:
+                            return json_response(self, {"error": "RFC822 data was not stored"}, 404)
+                        query = parse_qs(parsed.query)
+                        inline = query.get("inline", ["0"])[0] in {"1", "true", "yes"}
+                        return self.send_bytes(bytes(raw), "message/rfc822", filename=f"{message['provider_message_id']}.eml", inline=inline)
+                    attachment = database.connection.execute(
+                        "SELECT * FROM raw_attachments WHERE raw_message_id=? AND id=?",
+                        (row_id, int(attachment_id_text)),
+                    ).fetchone()
+                    if attachment is None:
+                        return self.send_error(404)
+                    raw = attachment["content"]
+                    if not raw and attachment["blob_path"]:
+                        candidate = (RAW_EXPORT_ROOT / attachment["blob_path"]).resolve()
+                        try:
+                            candidate.relative_to(RAW_EXPORT_ROOT.resolve())
+                        except ValueError:
+                            return self.send_error(404)
+                        if candidate.is_file():
+                            raw = candidate.read_bytes()
+                    if not raw:
+                        return json_response(self, {"error": "attachment bytes were not stored"}, 404)
+                    query = parse_qs(parsed.query)
+                    inline = query.get("inline", ["0"])[0] in {"1", "true", "yes"}
+                    return self.send_bytes(bytes(raw), attachment["mime_type"] or "application/octet-stream", filename=attachment["filename"], inline=inline)
+                finally:
+                    database.close()
+            if parsed.path == "/api/raw-exports":
+                return json_response(self, raw_export_snapshot())
             if parsed.path == "/api/core/jobs":
                 return json_response(self, core_job_snapshot())
             if parsed.path == "/api/core/health":
@@ -2019,6 +2232,68 @@ class Handler(BaseHTTPRequestHandler):
                 connection.close()
                 threading.Thread(target=run_scan, args=(run_id, config), daemon=True).start()
                 return json_response(self, {"id": run_id, "status": "queued"}, 202)
+            if parsed.path == "/api/raw-exports":
+                if not isinstance(data, dict):
+                    raise ValueError("raw export request must be an object")
+                account_id = core_account_id(data.get("account_id"))
+                with Database(DB_PATH) as database:
+                    account = database.connection.execute("SELECT email, status FROM accounts_v2 WHERE id=?", (account_id,)).fetchone()
+                if account is None or account["status"] not in {"connected", "authorizing"}:
+                    raise ValueError("connected Gmail account was not found")
+                query = str(data.get("query", "")).strip()
+                if len(query) > MAX_QUERY:
+                    raise ValueError("query is too long")
+                max_messages = int(data.get("max_messages") or 10000)
+                if not 1 <= max_messages <= 100000:
+                    raise ValueError("max_messages must be between 1 and 100000")
+                raw_extensions = data.get("attachment_extensions", [])
+                if isinstance(raw_extensions, str):
+                    raw_extensions = raw_extensions.split(",")
+                attachment_extensions = gscrape.normalize_attachment_extensions(raw_extensions)
+                attachment_regex = str(data.get("attachment_filename_regex", "")).strip()
+                if attachment_regex:
+                    re.compile(attachment_regex, re.I)
+                export_id = str(data.get("resume_id") or uuid.uuid4().hex)
+                with RAW_EXPORT_LOCK:
+                    if export_id in RAW_EXPORT_PROCESSES:
+                        raise ValueError("raw export is already running")
+                config = {"account_id": account_id, "query": query, "after_date": str(data.get("after", "")).strip(),
+                          "before_date": str(data.get("before", "")).strip(), "max_messages": max_messages,
+                          "include_attachments": bool(data.get("include_attachments", False)),
+                          "attachment_extensions": attachment_extensions, "attachment_filename_regex": attachment_regex,
+                          "requests_per_second": float(data.get("requests_per_second", 1.0)),
+                          "rate_limit_max_delay": float(data.get("rate_limit_max_delay", 60.0)), "resume_id": data.get("resume_id")}
+                if not 0 <= config["requests_per_second"] <= 10:
+                    raise ValueError("requests_per_second must be between 0 and 10")
+                threading.Thread(target=run_raw_export, args=(export_id, config), daemon=True).start()
+                return json_response(self, {"id": export_id, "status": "queued", "database": str(RAW_EXPORT_DB)}, 201)
+            if parsed.path.startswith("/api/raw-exports/") and parsed.path.endswith("/stop"):
+                export_id = parsed.path.split("/")[3]
+                with RAW_EXPORT_LOCK:
+                    process = RAW_EXPORT_PROCESSES.get(export_id)
+                if process is None:
+                    return json_response(self, {"error": "raw export is not running"}, 409)
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+                from core.raw_export import RawMailboxDatabase
+                if RAW_EXPORT_DB.exists():
+                    with RawMailboxDatabase(RAW_EXPORT_DB) as database:
+                        database.finish(export_id, "cancelled")
+                return json_response(self, {"id": export_id, "status": "stopping"})
+            if parsed.path.startswith("/api/raw-exports/") and parsed.path.endswith("/delete"):
+                export_id = parsed.path.split("/")[3]
+                with RAW_EXPORT_LOCK:
+                    if export_id in RAW_EXPORT_PROCESSES:
+                        raise ValueError("stop the running raw export before deleting it")
+                from core.raw_export import RawMailboxDatabase
+                if not RAW_EXPORT_DB.exists():
+                    return json_response(self, {"deleted": False})
+                with RawMailboxDatabase(RAW_EXPORT_DB) as database:
+                    database.connection.execute("DELETE FROM raw_exports WHERE id=?", (export_id,))
+                    database.connection.commit()
+                return json_response(self, {"deleted": True})
             if parsed.path == "/api/runs/bulk-delete":
                 ids = data.get("ids") or []
                 if not isinstance(ids, list) or not ids:
@@ -2149,6 +2424,8 @@ def main():
     db().close()
     recovered = recover_interrupted_runs()
     print(f"GScrape dashboard: http://{HOST}:{PORT}/")
+    if HOST in {"0.0.0.0", "::"}:
+        print("WARNING: dashboard is LAN-exposed without built-in authentication; protect port 8766 with a firewall or trusted network.")
     print(f"OAuth redirect URI: {OAUTH_REDIRECT_URI}")
     if recovered:
         print(f"Recovered {recovered} interrupted run(s) from a prior dashboard process")
